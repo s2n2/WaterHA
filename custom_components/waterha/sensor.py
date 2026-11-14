@@ -1,0 +1,200 @@
+"""Rain sensors (hub) and status / schedule sensors (per tap)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import UnitOfPrecipitationDepth, UnitOfTime, UnitOfVolume
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
+
+from .const import (
+    CONF_FLOW_SENSOR,
+    CONF_MODE,
+    CONF_NAME,
+    DOMAIN,
+    STATUS_DISABLED,
+    STATUS_IDLE,
+    STATUS_QUEUED,
+    STATUS_RAIN_HOLD,
+    STATUS_WATERING,
+)
+from .entity import TapEntity, WaterEntity, add_entities
+from .hub import WaterHub
+
+# Role -> (platform, unique-id key) of each tap entity, for the card.
+TAP_ROLES = {
+    "status": ("sensor", "status"),
+    "next_run": ("sensor", "next_run"),
+    "last_run": ("sensor", "last_run"),
+    "automatic": ("switch", "automatic"),
+    "amount": ("number", "amount"),
+    "rain_threshold": ("number", "rain_threshold"),
+    "start_time": ("time", "start_time"),
+    "water_now": ("button", "water_now"),
+    "stop": ("button", "stop"),
+}
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry, async_add_entities: AddConfigEntryEntitiesCallback
+) -> None:
+    hub: WaterHub = entry.runtime_data
+    add_entities(
+        hass,
+        entry,
+        async_add_entities,
+        [RainSensor(hub, "rain_past_24h"), RainSensor(hub, "rain_next_24h"), RainWindowSensor(hub)],
+        lambda hub, tap_id: [
+            TapStatusSensor(hub, tap_id),
+            NextRunSensor(hub, tap_id),
+            LastRunSensor(hub, tap_id),
+            LastWaterSensor(hub, tap_id),
+        ],
+    )
+
+
+class RainSensor(WaterEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.PRECIPITATION
+    _attr_native_unit_of_measurement = UnitOfPrecipitationDepth.MILLIMETERS
+    _attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        rain = self.hub.rain
+        if rain is None:
+            return None
+        return rain.past_mm if self._attr_translation_key == "rain_past_24h" else rain.next_mm
+
+    @property
+    def available(self) -> bool:
+        return self.hub.rain is not None
+
+
+class RainWindowSensor(RainSensor):
+    """Past 24 h + next 24 h: the number the thresholds are compared with.
+
+    Its attributes carry the hourly series and the tap entity ids for the card.
+    """
+
+    _unrecorded_attributes = frozenset({"hours", "taps", "source", "error", "updated"})
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "rain_window")
+
+    @property
+    def native_value(self) -> float | None:
+        return self.hub.rain_total()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        rain = self.hub.rain
+        registry = er.async_get(self.hass)
+        taps = []
+        for tap_id, sub in self.hub.taps.items():
+            ids = {
+                role: registry.async_get_entity_id(platform, DOMAIN, f"{tap_id}_{key}")
+                for role, (platform, key) in TAP_ROLES.items()
+            }
+            taps.append({"id": tap_id, "name": sub.data.get(CONF_NAME), **ids})
+        return {
+            "waterha": "rain",
+            "hours": [h.as_dict() for h in rain.hours] if rain else [],
+            "past_24h": rain.past_mm if rain else None,
+            "next_24h": rain.next_mm if rain else None,
+            "source": rain.source if rain else None,
+            "updated": self.hub.rain_updated.isoformat() if self.hub.rain_updated else None,
+            "error": self.hub.rain_error,
+            "taps": taps,
+        }
+
+
+class TapStatusSensor(TapEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [STATUS_IDLE, STATUS_WATERING, STATUS_QUEUED, STATUS_DISABLED, STATUS_RAIN_HOLD]
+    _unrecorded_attributes = frozenset({"run", "days", "tap_entity", "rain_window_mm"})
+
+    def __init__(self, hub: WaterHub, tap_id: str) -> None:
+        super().__init__(hub, tap_id, "status")
+
+    @property
+    def native_value(self) -> str:
+        return self.hub.status(self.tap_id)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self.hub.tap_attributes(self.tap_id)
+
+
+class NextRunSensor(TapEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, hub: WaterHub, tap_id: str) -> None:
+        super().__init__(hub, tap_id, "next_run")
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.hub.next_run(self.tap_id)
+
+
+class LastRunSensor(TapEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, hub: WaterHub, tap_id: str) -> None:
+        super().__init__(hub, tap_id, "last_run")
+
+    @property
+    def native_value(self) -> datetime | None:
+        value = self.hub.tap_state(self.tap_id).get("last_run")
+        return dt_util.parse_datetime(value) if value else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        state = self.hub.tap_state(self.tap_id)
+        return {
+            "result": state.get("last_result"),
+            "reason": state.get("last_reason"),
+            "minutes": state.get("last_minutes"),
+            "litres": state.get("last_litres"),
+            "last_skip": state.get("last_skip"),
+            "last_skip_rain_mm": state.get("last_skip_rain"),
+        }
+
+
+class LastWaterSensor(TapEntity, SensorEntity):
+    """Water given by the current or last run: litres with a flow sensor, else minutes."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, hub: WaterHub, tap_id: str) -> None:
+        super().__init__(hub, tap_id, "last_water")
+        if self.cfg.get(CONF_FLOW_SENSOR):
+            self._attr_device_class = SensorDeviceClass.VOLUME
+            self._attr_native_unit_of_measurement = UnitOfVolume.LITERS
+        else:
+            self._attr_device_class = SensorDeviceClass.DURATION
+            self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
+
+    @property
+    def native_value(self) -> float | None:
+        run = self.hub.runs.get(self.tap_id)
+        litres = bool(self.cfg.get(CONF_FLOW_SENSOR))
+        if run is not None:
+            if litres:
+                return round(run.litres, 1)
+            return round((dt_util.utcnow() - run.started).total_seconds() / 60, 1)
+        state = self.hub.tap_state(self.tap_id)
+        return state.get("last_litres") if litres else state.get("last_minutes")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"mode": self.cfg.get(CONF_MODE)}

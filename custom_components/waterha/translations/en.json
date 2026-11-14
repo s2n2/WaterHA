@@ -1,0 +1,233 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Garden watering",
+        "description": "Rain data uses your Home Assistant home location. Add taps after setup from this integration's page.",
+        "data": {
+          "forecast_source": "Rain forecast from",
+          "weather_entity": "Weather entity",
+          "sequential": "Run one tap at a time"
+        },
+        "data_description": {
+          "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
+          "sequential": "Taps due at the same time wait their turn, keeping water pressure up."
+        }
+      }
+    },
+    "error": {
+      "weather_required": "Choose a weather entity, or use Open-Meteo."
+    },
+    "abort": {
+      "already_configured": "WaterHA is already set up. Add taps from its integration page."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Garden watering",
+        "data": {
+          "forecast_source": "Rain forecast from",
+          "weather_entity": "Weather entity",
+          "sequential": "Run one tap at a time"
+        },
+        "data_description": {
+          "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
+          "sequential": "Taps due at the same time wait their turn, keeping water pressure up."
+        }
+      }
+    },
+    "error": {
+      "weather_required": "Choose a weather entity, or use Open-Meteo."
+    }
+  },
+  "config_subentries": {
+    "tap": {
+      "initiate_flow": {
+        "user": "Add tap"
+      },
+      "entry_type": "Tap",
+      "step": {
+        "user": {
+          "title": "Add a tap",
+          "data": {
+            "name": "Name",
+            "tap_entity": "Tap (switch or valve)",
+            "mode": "Water by",
+            "amount": "Amount (minutes or litres)",
+            "flow_sensor": "Flow-rate sensor",
+            "start_time": "Start time",
+            "days": "Days",
+            "rain_threshold": "Rain threshold",
+            "max_minutes": "Maximum run time",
+            "enabled": "Automatic watering"
+          },
+          "data_description": {
+            "amount": "Minutes the tap stays open, or litres to deliver (litres needs a flow-rate sensor).",
+            "flow_sensor": "Needed for litres; also records how much water each run used.",
+            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this. 0 never skips.",
+            "max_minutes": "Safety limit: the tap closes after this long whatever happens."
+          }
+        },
+        "reconfigure": {
+          "title": "Change tap",
+          "data": {
+            "name": "Name",
+            "tap_entity": "Tap (switch or valve)",
+            "mode": "Water by",
+            "amount": "Amount (minutes or litres)",
+            "flow_sensor": "Flow-rate sensor",
+            "start_time": "Start time",
+            "days": "Days",
+            "rain_threshold": "Rain threshold",
+            "max_minutes": "Maximum run time",
+            "enabled": "Automatic watering"
+          },
+          "data_description": {
+            "amount": "Minutes the tap stays open, or litres to deliver (litres needs a flow-rate sensor).",
+            "flow_sensor": "Needed for litres; also records how much water each run used.",
+            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this. 0 never skips.",
+            "max_minutes": "Safety limit: the tap closes after this long whatever happens."
+          }
+        }
+      },
+      "error": {
+        "flow_required": "Litres needs a flow-rate sensor.",
+        "days_required": "Pick at least one day.",
+        "already_added": "This tap is already added."
+      },
+      "abort": {
+        "reconfigure_successful": "Tap updated."
+      }
+    }
+  },
+  "selector": {
+    "forecast_source": {
+      "options": {
+        "open_meteo": "Open-Meteo (no account needed)",
+        "weather_entity": "A weather entity"
+      }
+    },
+    "mode": {
+      "options": {
+        "minutes": "Minutes",
+        "litres": "Litres"
+      }
+    },
+    "days": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "rain_past_24h": {
+        "name": "Rain past 24 h"
+      },
+      "rain_next_24h": {
+        "name": "Rain next 24 h"
+      },
+      "rain_window": {
+        "name": "Rain past and next 24 h"
+      },
+      "status": {
+        "name": "Status",
+        "state": {
+          "idle": "Idle",
+          "watering": "Watering",
+          "queued": "Waiting for another tap",
+          "disabled": "Automatic off",
+          "rain_hold": "Holding for rain"
+        }
+      },
+      "next_run": {
+        "name": "Next run"
+      },
+      "last_run": {
+        "name": "Last run"
+      },
+      "last_water": {
+        "name": "Water given"
+      }
+    },
+    "switch": {
+      "automatic": {
+        "name": "Automatic watering"
+      }
+    },
+    "number": {
+      "amount_minutes": {
+        "name": "Minutes to water"
+      },
+      "amount_litres": {
+        "name": "Litres to water"
+      },
+      "rain_threshold": {
+        "name": "Rain threshold"
+      },
+      "max_minutes": {
+        "name": "Maximum run time"
+      }
+    },
+    "time": {
+      "start_time": {
+        "name": "Start time"
+      }
+    },
+    "button": {
+      "water_now": {
+        "name": "Water now"
+      },
+      "stop": {
+        "name": "Stop"
+      },
+      "stop_all": {
+        "name": "Stop all taps"
+      },
+      "refresh_rain": {
+        "name": "Refresh rain"
+      }
+    }
+  },
+  "services": {
+    "water_now": {
+      "name": "Water now",
+      "description": "Open a WaterHA tap now for its set amount, or the amount given. Ignores the rain threshold.",
+      "fields": {
+        "entity_id": {
+          "name": "Tap",
+          "description": "The tap's switch or valve, or any of its WaterHA entities."
+        },
+        "amount": {
+          "name": "Amount",
+          "description": "Minutes or litres; defaults to the tap's setting."
+        },
+        "mode": {
+          "name": "Water by",
+          "description": "Minutes or litres; defaults to the tap's setting."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stop watering",
+      "description": "Close the given taps, or every WaterHA tap.",
+      "fields": {
+        "entity_id": {
+          "name": "Tap",
+          "description": "Leave empty to stop all taps."
+        }
+      }
+    },
+    "refresh_rain": {
+      "name": "Refresh rain",
+      "description": "Fetch rain data now."
+    }
+  }
+}
