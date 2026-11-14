@@ -30,7 +30,10 @@ from .const import (
     CONF_NAME,
     CONF_RAIN_THRESHOLD,
     CONF_SEQUENTIAL,
+    CONF_SLOT_1,
+    CONF_SLOT_2,
     CONF_START_TIME,
+    CONF_START_TIME_2,
     CONF_TAP_ENTITY,
     CONF_WEATHER_ENTITY,
     DAYS,
@@ -40,6 +43,7 @@ from .const import (
     DEFAULT_MAX_MINUTES,
     DEFAULT_RAIN_THRESHOLD,
     DEFAULT_START_TIME,
+    DEFAULT_START_TIME_2,
     DOMAIN,
     MODE_LITRES,
     MODE_MINUTES,
@@ -180,7 +184,12 @@ def _tap_schema(d: dict[str, Any]) -> vol.Schema:
             ): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="sensor", device_class="volume_flow_rate")
             ),
+            vol.Required(CONF_SLOT_1, default=d.get(CONF_SLOT_1, True)): bool,
             vol.Required(CONF_START_TIME, default=d.get(CONF_START_TIME, DEFAULT_START_TIME)): (
+                selector.TimeSelector()
+            ),
+            vol.Required(CONF_SLOT_2, default=d.get(CONF_SLOT_2, False)): bool,
+            vol.Required(CONF_START_TIME_2, default=d.get(CONF_START_TIME_2, DEFAULT_START_TIME_2)): (
                 selector.TimeSelector()
             ),
             vol.Required(CONF_DAYS, default=d.get(CONF_DAYS, list(DAYS))): selector.SelectSelector(

@@ -156,7 +156,7 @@ async def test_settings_from_entities(hass: HomeAssistant, setup, rain):
         "number", "set_value", {"entity_id": "number.lawn_rain_threshold", "value": 8}, blocking=True
     )
     await hass.services.async_call(
-        "time", "set_value", {"entity_id": "time.lawn_start_time", "time": "18:15:00"}, blocking=True
+        "time", "set_value", {"entity_id": "time.lawn_slot_1_time", "time": "18:15:00"}, blocking=True
     )
     await hass.async_block_till_done()
     data = entry.subentries["tap1"].data

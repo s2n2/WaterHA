@@ -48,6 +48,9 @@ TAP_ROLES = {
     "amount_hot": ("number", "amount_hot"),
     "rain_threshold": ("number", "rain_threshold"),
     "start_time": ("time", "start_time"),
+    "start_time_2": ("time", "start_time_2"),
+    "slot_1": ("switch", "slot_1"),
+    "slot_2": ("switch", "slot_2"),
     "water_now": ("button", "water_now"),
     "stop": ("button", "stop"),
 }
@@ -178,7 +181,7 @@ class TapStatusSensor(TapEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [STATUS_IDLE, STATUS_WATERING, STATUS_QUEUED, STATUS_DISABLED, STATUS_RAIN_HOLD]
     _unrecorded_attributes = frozenset(
-        {"run", "days", "tap_entity", "rain_window_mm", "amounts", "queue_position"}
+        {"run", "days", "tap_entity", "rain_window_mm", "amounts", "queue_position", "slots"}
     )
 
     def __init__(self, hub: WaterHub, tap_id: str) -> None:

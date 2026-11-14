@@ -64,7 +64,10 @@
             "amount_warm": "Warm day amount",
             "amount_hot": "Hot day amount",
             "flow_sensor": "Flow-rate sensor",
-            "start_time": "Start time",
+            "slot_1": "Slot 1 on",
+            "start_time": "Slot 1 time",
+            "slot_2": "Slot 2 on",
+            "start_time_2": "Slot 2 time",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
@@ -77,7 +80,8 @@
             "max_minutes": "Safety limit: the tap closes after this long whatever happens.",
             "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
             "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
-            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another."
+            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another.",
+            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain)."
           }
         },
         "reconfigure": {
@@ -90,7 +94,10 @@
             "amount_warm": "Warm day amount",
             "amount_hot": "Hot day amount",
             "flow_sensor": "Flow-rate sensor",
-            "start_time": "Start time",
+            "slot_1": "Slot 1 on",
+            "start_time": "Slot 1 time",
+            "slot_2": "Slot 2 on",
+            "start_time_2": "Slot 2 time",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
@@ -103,7 +110,8 @@
             "max_minutes": "Safety limit: the tap closes after this long whatever happens.",
             "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
             "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
-            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another."
+            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another.",
+            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain)."
           }
         }
       },
@@ -190,6 +198,12 @@
       },
       "one_at_a_time": {
         "name": "One at a time"
+      },
+      "slot_1": {
+        "name": "Slot 1"
+      },
+      "slot_2": {
+        "name": "Slot 2"
       }
     },
     "number": {
@@ -217,7 +231,10 @@
     },
     "time": {
       "start_time": {
-        "name": "Start time"
+        "name": "Slot 1 time"
+      },
+      "start_time_2": {
+        "name": "Slot 2 time"
       }
     },
     "button": {

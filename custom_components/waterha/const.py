@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -34,7 +34,10 @@ CONF_MODE = "mode"
 CONF_AMOUNT = "amount"  # 0.1.x single amount; read as the fallback for every band
 CONF_SEQUENTIAL = "sequential"  # one at a time: queue behind other one-at-a-time taps
 CONF_FLOW_SENSOR = "flow_sensor"
-CONF_START_TIME = "start_time"
+CONF_START_TIME = "start_time"  # slot 1 time (the only time in 0.1/0.2)
+CONF_START_TIME_2 = "start_time_2"
+CONF_SLOT_1 = "slot_1"  # slot on/off
+CONF_SLOT_2 = "slot_2"
 CONF_DAYS = "days"
 CONF_RAIN_THRESHOLD = "rain_threshold"
 CONF_MAX_MINUTES = "max_minutes"
@@ -69,6 +72,10 @@ def amount_key(band: str) -> str:
 # (radio integrations may not be ready the first time).
 STARTUP_RECHECK_SECONDS = 60
 DEFAULT_START_TIME = "06:00:00"
+DEFAULT_START_TIME_2 = "19:00:00"
+# Two daily slots: (number, time key, on/off key, on by default).
+SLOTS = [(1, CONF_START_TIME, CONF_SLOT_1, True), (2, CONF_START_TIME_2, CONF_SLOT_2, False)]
+DEFAULT_SLOT_TIMES = {1: DEFAULT_START_TIME, 2: DEFAULT_START_TIME_2}
 DEFAULT_RAIN_THRESHOLD = 5.0
 DEFAULT_MAX_MINUTES = 45
 

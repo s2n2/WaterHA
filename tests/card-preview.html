@@ -32,7 +32,7 @@ const states = {
     taps: [{ id: "t1", name: "Lawn", status: "sensor.lawn_status", next_run: "sensor.lawn_next_run",
       automatic: "switch.lawn_auto", one_at_a_time: "switch.lawn_seq", amount_cool: "number.lawn_cool",
       amount_warm: "number.lawn_warm", amount_hot: "number.lawn_hot", rain_threshold: "number.lawn_thr",
-      start_time: "time.lawn_start", water_now: "button.lawn_water", stop: "button.lawn_stop" }] } },
+      start_time: "time.lawn_start", start_time_2: "time.lawn_start2", slot_1: "switch.lawn_s1", slot_2: "switch.lawn_s2", water_now: "button.lawn_water", stop: "button.lawn_stop" }] } },
   "sensor.lawn_status": { state: "idle", last_updated: "1", attributes: { mode: "minutes", start_time: "06:00:00",
     day_type: "warm", amount_today: 10, rain_factor: 0.5, scheduled_amount: 5,
     next_run: new Date(now + 86400000).toISOString(), last_result: "completed", last_run: new Date(now - 86400000).toISOString(), last_minutes: 10 } },
@@ -45,6 +45,9 @@ const states = {
   "number.hot_from": { state: "23.0", last_updated: "1", attributes: { min: -10, max: 50, step: 0.5 } },
   "number.lawn_thr": { state: "5.0", last_updated: "1", attributes: { min: 0, max: 200, step: 0.5 } },
   "time.lawn_start": { state: "06:00:00", last_updated: "1", attributes: {} },
+  "time.lawn_start2": { state: "19:30:00", last_updated: "1", attributes: {} },
+  "switch.lawn_s1": { state: "on", last_updated: "1", attributes: {} },
+  "switch.lawn_s2": { state: "off", last_updated: "1", attributes: {} },
 };
 let n = 2;
 const card = document.getElementById("card");
@@ -55,6 +58,10 @@ function push() {
 function callService(domain, service, data) {
   window.calls.push([domain, service, data]);
   document.getElementById("log").textContent = JSON.stringify(window.calls, null, 1);
+  if (domain === "switch") {
+    states[data.entity_id] = { ...states[data.entity_id], state: service === "turn_on" ? "on" : "off", last_updated: String(n++) };
+    setTimeout(push, 50);
+  }
   if (domain === "number") {
     states[data.entity_id] = { ...states[data.entity_id], state: String(data.value), last_updated: String(n++) };
     setTimeout(push, 50);

@@ -79,4 +79,4 @@ async def test_reconfigure_tap(hass: HomeAssistant, setup, rain):
     assert result["reason"] == "reconfigure_successful"
     assert entry.subentries["tap1"].data["rain_threshold"] == 12.0
     await hass.async_block_till_done()
-    assert hass.states.get("time.lawn_start_time").state == "19:30:00"
+    assert hass.states.get("time.lawn_slot_1_time").state == "19:30:00"

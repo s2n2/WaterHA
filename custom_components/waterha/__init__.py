@@ -116,6 +116,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> boo
     _remove_old_entities(hass, entry)
     await hub.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Every platform is up: refresh attributes that list other entities (the card's map).
+    hub.notify()
     structure = _structure(entry)
 
     async def _updated(hass: HomeAssistant, entry: WaterConfigEntry) -> None:

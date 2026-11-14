@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
 
 const BAND = {
   cool: ["Cool", "mdi:snowflake"],
@@ -97,7 +97,7 @@ class WaterHACard extends HTMLElement {
     ids.push(a0.cool_below_entity, a0.hot_from_entity);
     for (const t of taps) {
       ids.push(t.status, t.next_run, t.automatic, t.one_at_a_time, t.amount_cool, t.amount_warm,
-        t.amount_hot, t.rain_threshold, t.start_time);
+        t.amount_hot, t.rain_threshold, t.start_time, t.start_time_2, t.slot_1, t.slot_2);
     }
     const sig = ids.map((id) => {
       const s = id && hass.states[id];
@@ -251,6 +251,16 @@ class WaterHACard extends HTMLElement {
         title="${BAND[b][0]} day amount${a.day_type === b ? " (today)" : ""}"><ha-icon icon="${BAND[b][1]}"></ha-icon>${esc(fmt(st[id]?.state))}</button>`;
     }).join("");
     const editing = ["cool", "warm", "hot"].find((b) => this._edit === t[`amount_${b}`]);
+    // Two daily slots: tick to turn a slot on/off, tap the time to change it.
+    const slots = [[t.slot_1, t.start_time], [t.slot_2, t.start_time_2]].map(([sw, tm], i) => {
+      const on = st[sw]?.state === "on";
+      const time = (st[tm]?.state || "").slice(0, 5);
+      const icon = parseInt(time, 10) < 12 ? "mdi:weather-sunset-up" : "mdi:weather-night";
+      return `<span class="slot${on ? " on" : ""}">
+        <input type="checkbox" data-toggle="${esc(sw)}" ${on ? "checked" : ""} aria-label="Slot ${i + 1} on"/>
+        <button class="slottime" data-more="${esc(tm)}" title="Slot ${i + 1} time"><ha-icon icon="${icon}"></ha-icon>${esc(time || "–")}</button>
+      </span>`;
+    }).join("");
     const run = a.run;
     let progress = "";
     if (run) {
@@ -293,8 +303,7 @@ class WaterHACard extends HTMLElement {
         <span class="trio" title="Cool / warm / hot day amounts (${unit})">${amounts}<span class="unit">${unit}</span></span>
         <button class="val${this._edit === t.rain_threshold ? " open" : ""}" data-edit="${esc(t.rain_threshold)}" title="Rain threshold (past + next 24 h)">
           <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))} mm` : "off"}</button>
-        <button class="val" data-more="${esc(t.start_time)}" title="Start time">
-          <ha-icon icon="mdi:clock-outline"></ha-icon>${esc((a.start_time || "").slice(0, 5))}</button>
+        ${slots}
       </div>
       ${editing ? this._editor(t[`amount_${editing}`], unit, `Water on a ${BAND[editing][0].toLowerCase()} day for`) : ""}
       ${this._edit === t.rain_threshold ? this._editor(t.rain_threshold, "mm") : ""}
@@ -342,6 +351,12 @@ const STYLE = `<style>
   .stat.today b { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
   .stat.today.open b, .stat.today:hover b { color: var(--primary-color); }
   .trio { display: inline-flex; align-items: center; gap: 4px; }
+  .slot { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 8px 0 4px;
+          border: 1px dashed var(--divider-color); border-radius: 16px; color: var(--secondary-text-color);
+          --mdc-icon-size: 18px; }
+  .slot.on { border-style: solid; color: var(--primary-text-color); }
+  .slot input { margin: 0 2px; cursor: pointer; }
+  .slottime { display: inline-flex; align-items: center; gap: 3px; }
   .trio .unit { font-size: 0.85em; color: var(--secondary-text-color); }
   .val.band { padding: 0 8px; }
   .val.today { border-color: var(--primary-color); border-width: 2px; font-weight: 500; }

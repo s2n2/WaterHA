@@ -53,6 +53,7 @@ from .const import (
     DEFAULT_COOL_BELOW,
     DEFAULT_HOT_FROM,
     DEFAULT_MAX_MINUTES,
+    DEFAULT_SLOT_TIMES,
     DOMAIN,
     FLOW_TICK_SECONDS,
     MODE_LITRES,
@@ -71,6 +72,7 @@ from .const import (
     RESULT_STOPPED,
     RESULT_STOPPED_EXTERNALLY,
     SIGNAL_UPDATE,
+    SLOTS,
     SOURCE_WEATHER,
     STARTUP_RECHECK_SECONDS,
     STATUS_DISABLED,
@@ -146,6 +148,11 @@ def band_amount(cfg: dict[str, Any], band: str) -> float:
     if value is None:
         value = DEFAULT_BAND_AMOUNTS.get(cfg.get(CONF_MODE, MODE_MINUTES), {}).get(band, 0)
     return float(value)
+
+
+def _scheduled_key(slot: int) -> str:
+    # Slot 1 keeps the 0.2 key so an upgrade the same morning does not run it twice.
+    return "last_scheduled" if slot == 1 else f"last_scheduled_{slot}"
 
 
 def parse_time(value: str | None) -> time | None:
@@ -460,11 +467,26 @@ class WaterHub:
         return round(self.amount_today(tap_id) * self.rain_factor(tap_id), 1)
 
     # -------------------------------------------------------------- schedule
+    def slots(self, tap_id: str) -> list[tuple[int, time | None, bool]]:
+        """The tap's two daily slots: (number, time, on)."""
+        cfg = self.tap(tap_id)
+        return [
+            (n, parse_time(cfg.get(time_key) or DEFAULT_SLOT_TIMES[n]), bool(cfg.get(on_key, on_default)))
+            for n, time_key, on_key, on_default in SLOTS
+        ]
+
     def next_run(self, tap_id: str) -> datetime | None:
+        """The soonest run of any slot that is on (None with automatic watering off)."""
         cfg = self.tap(tap_id)
         if not cfg.get(CONF_ENABLED, True):
             return None
-        return next_run_after(dt_util.now(), parse_time(cfg.get(CONF_START_TIME)), cfg.get(CONF_DAYS, []))
+        now = dt_util.now()
+        runs = [
+            moment
+            for _n, start, on in self.slots(tap_id)
+            if on and (moment := next_run_after(now, start, cfg.get(CONF_DAYS, []))) is not None
+        ]
+        return min(runs) if runs else None
 
     def status(self, tap_id: str) -> str:
         if tap_id in self.runs:
@@ -481,26 +503,29 @@ class WaterHub:
         local = dt_util.as_local(now)
         changed = False
         for tap_id in self.taps:
-            if self._due(tap_id, local):
-                await self._scheduled_run(tap_id, local)
+            if (slot := self._due(tap_id, local)) is not None:
+                await self._scheduled_run(tap_id, local, slot)
                 changed = True
         if changed or self.runs:
             self.notify()
 
-    def _due(self, tap_id: str, local: datetime) -> bool:
+    def _due(self, tap_id: str, local: datetime) -> int | None:
+        """The slot due to run this minute, if any (each slot runs at most once a day)."""
         cfg = self.tap(tap_id)
-        start = parse_time(cfg.get(CONF_START_TIME))
-        if not cfg.get(CONF_ENABLED, True) or start is None:
-            return False
-        if DAYS[local.weekday()] not in cfg.get(CONF_DAYS, []):
-            return False
-        if (local.hour, local.minute) != (start.hour, start.minute):
-            return False
-        return self.tap_state(tap_id).get("last_scheduled") != local.date().isoformat()
+        if not cfg.get(CONF_ENABLED, True) or DAYS[local.weekday()] not in cfg.get(CONF_DAYS, []):
+            return None
+        today = local.date().isoformat()
+        for n, start, on in self.slots(tap_id):
+            if not on or start is None or (local.hour, local.minute) != (start.hour, start.minute):
+                continue
+            if self.tap_state(tap_id).get(_scheduled_key(n)) != today:
+                return n
+        return None
 
-    async def _scheduled_run(self, tap_id: str, local: datetime) -> None:
+    async def _scheduled_run(self, tap_id: str, local: datetime, slot: int = 1) -> None:
         state = self.tap_state(tap_id)
-        state["last_scheduled"] = local.date().isoformat()
+        state[_scheduled_key(slot)] = local.date().isoformat()
+        state["last_slot"] = slot
         stale = self.rain_updated is None or dt_util.utcnow() - self.rain_updated > timedelta(
             minutes=RAIN_REFRESH_MINUTES + 15
         )
@@ -770,6 +795,11 @@ class WaterHub:
                 (i + 1 for i, item in enumerate(self.queue) if item[0] == tap_id), None
             ),
             "start_time": cfg.get(CONF_START_TIME),
+            "slots": [
+                {"slot": n, "time": start.isoformat() if start else None, "on": on}
+                for n, start, on in self.slots(tap_id)
+            ],
+            "last_slot": state.get("last_slot"),
             "days": cfg.get(CONF_DAYS, []),
             "rain_threshold_mm": cfg.get(CONF_RAIN_THRESHOLD),
             "rain_window_mm": self.rain_total(),

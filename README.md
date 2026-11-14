@@ -9,7 +9,8 @@ when, and how much rain makes a run unnecessary. WaterHA pulls hourly rain for t
 - **shortens** a scheduled run in proportion to rain below the tap's threshold
   (2.5 mm against a 5 mm threshold waters 50%),
 - **skips** it when rain reaches the threshold,
-- runs taps marked **one at a time** one after another, so several taps can share a start time.
+- runs taps marked **one at a time** one after another, so several taps can share a start time,
+- gives each tap **two daily slots** (e.g. morning and evening), each with its own on/off.
 
 Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 
@@ -37,7 +38,8 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Water by | Minutes, or litres (needs a flow-rate sensor) |
 | Cool / warm / hot day amount | Minutes open, or litres to deliver, for each day type |
 | Flow-rate sensor | e.g. `sensor.tap_lawn_volume_flow_rate`; records litres used even in minutes mode |
-| Start time, Days | When it runs |
+| Slot 1 / Slot 2 | Two daily times, each switched on or off (default 06:00 on, 19:00 off). Each slot that runs gives the full amount, less for rain. |
+| Days | Which days the slots run |
 | Rain threshold | Skip when past 24 h + next 24 h rain ≥ this (mm); less rain shortens the run in proportion. 0 = ignore rain |
 | Maximum run time | Safety limit; the tap closes after this whatever happens |
 | One at a time | Wait for other one-at-a-time taps to finish. Taps due together run in the order they were added. |
@@ -63,7 +65,8 @@ Hub: `Rain past 24 h`, `Rain next 24 h`, `Rain past and next 24 h` (with an hour
 Per tap: `Status` (idle, watering, waiting, automatic off, holding for rain; attributes include
 today's amount, the rain factor and queue position), `Next run`, `Last run` (result, day type,
 minutes, litres, rain skip), `Water given`, `Automatic watering`, `One at a time`,
-`Cool / Warm / Hot day amount`, `Rain threshold`, `Maximum run time`, `Start time`,
+`Cool / Warm / Hot day amount`, `Rain threshold`, `Maximum run time`, `Slot 1`, `Slot 2`,
+`Slot 1 time`, `Slot 2 time`,
 `Water now`, `Stop`.
 
 ## Dashboard card
@@ -78,8 +81,8 @@ title: Garden
 It shows the hourly rain for the 48 h window (past in grey, forecast in blue, stronger for
 higher probability), the totals and today's day type (tap it to change the splits). Each tap
 has Water now/Stop, Auto, One at a time, its cool/warm/hot amounts (today's is outlined; tap
-one for one-tap presets or to type any value), rain threshold, start time, and what its next
-run will give after rain.
+one for one-tap presets or to type any value), rain threshold, its two slots (tick to turn a
+slot on or off, tap the time to change it), and what its next run will give after rain.
 
 ## Services
 
@@ -107,7 +110,11 @@ Assistant, refreshed every 30 minutes and before a scheduled run if older than t
 If rain data is unavailable at a scheduled time, the tap waters in full; if temperature is
 unavailable, it uses the warm-day amount.
 
-## Upgrading from 0.1
+## Upgrading
+
+From 0.2: a tap's start time becomes slot 1 (on); slot 2 starts off at 19:00.
+
+### From 0.1
 
 A 0.1 tap's single amount becomes its cool, warm and hot amount until you change them, and
 every tap starts as one at a time. The old `Minutes/Litres to water` entity is removed.
