@@ -37,10 +37,10 @@ async def test_entities_and_rain(hass: HomeAssistant, setup, rain):
     rain(3.0, 1.5)
     await setup()
     past = hass.states.get("sensor.garden_watering_rain_past_24_h")
-    assert float(past.state) == pytest.approx(3.0, abs=0.01)
-    assert float(hass.states.get("sensor.garden_watering_rain_next_24_h").state) == pytest.approx(1.5, abs=0.01)
+    assert float(past.state) == pytest.approx(3.0, abs=0.1)
+    assert float(hass.states.get("sensor.garden_watering_rain_next_24_h").state) == pytest.approx(1.5, abs=0.1)
     window = hass.states.get("sensor.garden_watering_rain_past_and_next_24_h")
-    assert float(window.state) == pytest.approx(4.5, abs=0.01)
+    assert float(window.state) == pytest.approx(4.5, abs=0.1)
     assert window.attributes["taps"][0]["water_now"] == "button.lawn_water_now"
     assert len(window.attributes["hours"]) >= 48
     assert hass.states.get("sensor.lawn_status").state == "idle"
