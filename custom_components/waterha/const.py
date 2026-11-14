@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -23,7 +23,9 @@ CONF_WEATHER_ENTITY = "weather_entity"
 CONF_COOL_BELOW = "cool_below"
 CONF_HOT_FROM = "hot_from"
 # Hub options that change no entities, so editing them never reloads.
-SOFT_OPTIONS = {CONF_COOL_BELOW, CONF_HOT_FROM}
+CONF_BACKUP_WEATHER = "backup_weather"
+CONF_PAST_RAIN_SENSOR = "past_rain_sensor"
+SOFT_OPTIONS = {CONF_COOL_BELOW, CONF_HOT_FROM, CONF_BACKUP_WEATHER, CONF_PAST_RAIN_SENSOR}
 SOURCE_OPEN_METEO = "open_meteo"
 SOURCE_WEATHER = "weather_entity"
 
@@ -71,6 +73,10 @@ def amount_key(band: str) -> str:
 # At HA start every tap is closed, then checked again after this long
 # (radio integrations may not be ready the first time).
 STARTUP_RECHECK_SECONDS = 60
+
+# Run log kept for the history card.
+LOG_DAYS = 7
+LOG_MAX = 500
 DEFAULT_START_TIME = "06:00:00"
 DEFAULT_START_TIME_2 = "19:00:00"
 # Two daily slots: (number, time key, on/off key, on by default).

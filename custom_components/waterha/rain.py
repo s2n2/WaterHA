@@ -105,8 +105,40 @@ def parse_weather_forecast(forecast: list[dict[str, Any]]) -> list[RainHour]:
         if mm is None:
             mm = 0.0
         hours.append(
-            RainHour(moment + timedelta(hours=1), mm, _num(item.get("precipitation_probability")))
+            RainHour(
+                moment + timedelta(hours=1),
+                mm,
+                _num(item.get("precipitation_probability")),
+                _temp(item.get("temperature")),
+            )
         )
+    return hours
+
+
+def intensity_hours(
+    points: list[tuple[datetime, float]], start: datetime, end: datetime, to_mm_per_h: float = 1.0
+) -> list[RainHour]:
+    """Hourly rain from a rain-rate history (each value holds until the next).
+
+    Buckets end on the hour, covering start..end; the last may be partial.
+    """
+    points = sorted(points)
+    if not points:
+        return []
+    first = start.replace(minute=0, second=0, microsecond=0)
+    hours: list[RainHour] = []
+    bucket_end = first + timedelta(hours=1)
+    while bucket_end - timedelta(hours=1) < end:
+        b_start = max(bucket_end - timedelta(hours=1), start)
+        b_end = min(bucket_end, end)
+        mm = 0.0
+        for i, (moment, rate) in enumerate(points):
+            seg_start = max(moment, b_start)
+            seg_end = min(points[i + 1][0] if i + 1 < len(points) else end, b_end)
+            if seg_end > seg_start and rate > 0:
+                mm += rate * to_mm_per_h * (seg_end - seg_start).total_seconds() / 3600
+        hours.append(RainHour(bucket_end, round(mm, 3)))
+        bucket_end += timedelta(hours=1)
     return hours
 
 
@@ -160,7 +192,7 @@ async def fetch_open_meteo(
         "timeformat": "unixtime",
     }
     async with session.get(
-        OPEN_METEO_URL, params=params, timeout=aiohttp.ClientTimeout(total=30)
+        OPEN_METEO_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)
     ) as response:
         response.raise_for_status()
         payload = await response.json()

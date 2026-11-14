@@ -9,8 +9,10 @@ mid-run closes the tap instead of leaving it open.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
+from functools import partial
 from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -34,6 +36,7 @@ from .const import (
     BAND_HOT,
     BAND_WARM,
     CONF_AMOUNT,
+    CONF_BACKUP_WEATHER,
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
@@ -43,6 +46,7 @@ from .const import (
     CONF_MAX_MINUTES,
     CONF_MODE,
     CONF_NAME,
+    CONF_PAST_RAIN_SENSOR,
     CONF_RAIN_THRESHOLD,
     CONF_SEQUENTIAL,
     CONF_START_TIME,
@@ -56,6 +60,8 @@ from .const import (
     DEFAULT_SLOT_TIMES,
     DOMAIN,
     FLOW_TICK_SECONDS,
+    LOG_DAYS,
+    LOG_MAX,
     MODE_LITRES,
     MODE_MINUTES,
     NO_FLOW_AFTER_SECONDS,
@@ -88,6 +94,7 @@ from .rain import (
     RainSummary,
     day_max_temp,
     fetch_open_meteo,
+    intensity_hours,
     parse_weather_forecast,
     summarise,
 )
@@ -96,6 +103,10 @@ _LOGGER = logging.getLogger(__name__)
 
 STORE_VERSION = 1
 OPEN_STATES = {"on", "open", "opening"}
+WEATHER_HOURLY = 2  # WeatherEntityFeature.FORECAST_HOURLY
+# Forecast sensors (…_3h, …_1d) are not a record of rain that fell.
+FORECAST_SENSOR = re.compile(r"_\d+[hd]$")
+RATE_TO_MM_PER_H = {"mm/h": 1.0, "in/h": 25.4, "mm/s": 3600.0, "in/d": 25.4 / 24, "mm/d": 1 / 24}
 # If the tap has not reported open this long after we asked, the run failed.
 OPEN_CONFIRM_SECONDS = 90
 
@@ -194,6 +205,7 @@ class Run:
     flow: bool = False
     sequential: bool = True
     band: str | None = None
+    rain_factor: float | None = None  # scheduled runs: share left after rain
     cfg_max_seconds: float = 0.0
     litres: float = 0.0
     rate_lps: float = 0.0
@@ -229,6 +241,10 @@ class WaterHub:
         self._state: dict[str, dict[str, Any]] = {}
         self._unsubs: list[Callable[[], None]] = []
         self._retry_unsub: Callable[[], None] | None = None
+        self._open_meteo_ok = True
+        self._temp_high_backup: float | None = None
+        self.log: list[dict[str, Any]] = []
+        self._pending_factor: dict[str, float] = {}
         self.device_id: str | None = None
 
     # ------------------------------------------------------------------ setup
@@ -253,6 +269,8 @@ class WaterHub:
     async def async_start(self) -> None:
         stored = await self._store.async_load() or {}
         self._state = stored.get("taps", {})
+        self.log = stored.get("log", [])
+        self._prune_log()
         active = stored.get("active", {})
         # Set up while HA is starting = a restart: close every tap once their
         # integrations are up, in case one was stuck open. A reload while HA is
@@ -337,13 +355,58 @@ class WaterHub:
                 last_result=RESULT_INTERRUPTED,
                 last_litres=run.get("litres"),
             )
+            # HA went down without a clean stop, so when the water stopped is unknown.
+            self._log({
+                "tap": tap_id,
+                "name": self.tap(tap_id).get(CONF_NAME),
+                "start": run.get("started") or dt_util.utcnow().isoformat(),
+                "end": run.get("started") or dt_util.utcnow().isoformat(),
+                "minutes": None,
+                "litres": run.get("litres"),
+                "target": run.get("target"),
+                "mode": run.get("mode"),
+                "reason": run.get("reason"),
+                "result": RESULT_INTERRUPTED,
+            })
         self._save()
 
     def _as_store(self) -> dict[str, Any]:
         return {
             "taps": self._state,
             "active": {tap_id: run.as_dict() for tap_id, run in self.runs.items()},
+            "log": self.log,
         }
+
+    # ------------------------------------------------------------------- log
+    def _prune_log(self) -> None:
+        cutoff = (dt_util.utcnow() - timedelta(days=LOG_DAYS)).isoformat()
+        self.log = [item for item in self.log if (item.get("end") or item["start"]) >= cutoff][-LOG_MAX:]
+
+    def _log(self, item: dict[str, Any]) -> None:
+        self.log.append(item)
+        self._prune_log()
+
+    def log_view(self) -> list[dict[str, Any]]:
+        """The log newest first, with runs in progress (end None) on top."""
+        now = dt_util.utcnow()
+        live = [
+            {
+                "tap": run.tap_id,
+                "name": run.name,
+                "start": run.started.isoformat(),
+                "end": None,
+                "minutes": round((now - run.started).total_seconds() / 60, 1),
+                "litres": round(run.litres, 1) if run.flow else None,
+                "target": run.target,
+                "mode": run.mode,
+                "band": run.band,
+                "reason": run.reason,
+                "rain_factor": run.rain_factor,
+                "result": "running",
+            }
+            for run in self.runs.values()
+        ]
+        return live + list(reversed(self.log))
 
     def _save(self) -> None:
         self._store.async_delay_save(self._as_store, 2)
@@ -378,7 +441,9 @@ class WaterHub:
         return float(self.entry.options.get(CONF_HOT_FROM, DEFAULT_HOT_FROM))
 
     def temp_max_today(self) -> float | None:
-        """Today's forecast high (local day) from Open-Meteo."""
+        """Today's forecast high: the backup's daily high when on backup, else the hourly max."""
+        if self._temp_high_backup is not None:
+            return self._temp_high_backup
         tz = dt_util.get_default_time_zone()
         return day_max_temp(self._hours, dt_util.now().date(), tz)
 
@@ -404,15 +469,24 @@ class WaterHub:
         except Exception as err:  # noqa: BLE001 - network errors of every kind
             # A timeout's message is empty, so name the error type too.
             reason = f"{type(err).__name__}: {err}".rstrip(": ")
-            _LOGGER.warning(
-                "Open-Meteo rain data unavailable (%s); retrying in %s s", reason, RAIN_RETRY_SECONDS
-            )
-            self.rain_error = f"Open-Meteo: {reason}"
-            # Soon after startup the network is often not ready; do not wait 30 min.
-            if self._retry_unsub is None:
+            log = _LOGGER.warning if self._open_meteo_ok else _LOGGER.debug
+            self._open_meteo_ok = False
+            if await self._refresh_from_backup(now, reason):
+                log("Open-Meteo unavailable (%s); using %s", reason, self.rain.source)
+                self.notify()
+                return
+            log("Open-Meteo unavailable (%s) and no backup rain source; retrying in %s s",
+                reason, RAIN_RETRY_SECONDS)
+            self.rain_error = f"Open-Meteo: {reason}; no backup rain source"
+            # Nothing at all yet (e.g. network not up at startup): try again soon.
+            if self.rain is None and self._retry_unsub is None:
                 self._retry_unsub = async_call_later(self.hass, RAIN_RETRY_SECONDS, self._retry_rain)
             self.notify()
             return
+        if not self._open_meteo_ok:
+            _LOGGER.info("Open-Meteo rain data is back")
+        self._open_meteo_ok = True
+        self._temp_high_backup = None
         self._hours = past
         future: list[RainHour] = past
         source = "Open-Meteo"
@@ -429,20 +503,139 @@ class WaterHub:
         self.rain_updated = now
         self.notify()
 
-    async def _weather_forecast(self, entity_id: str | None) -> list[RainHour]:
+    async def _weather_forecast(self, entity_id: str | None, kind: str = "hourly") -> list[RainHour]:
         if not entity_id:
             raise ValueError("no weather entity configured")
         response = await self.hass.services.async_call(
             "weather",
             "get_forecasts",
-            {ATTR_ENTITY_ID: entity_id, "type": "hourly"},
+            {ATTR_ENTITY_ID: entity_id, "type": kind},
             blocking=True,
             return_response=True,
         )
         hours = parse_weather_forecast(response[entity_id]["forecast"])
         if not hours:
-            raise ValueError("empty hourly forecast")
+            raise ValueError(f"empty {kind} forecast")
         return hours
+
+    # ------------------------------------------------------------ backup rain
+    def backup_weather(self) -> list[str]:
+        """Weather entities to forecast from when Open-Meteo is down.
+
+        The configured ones, else every weather entity with an hourly forecast.
+        """
+        configured = self.entry.options.get(CONF_BACKUP_WEATHER)
+        if configured:
+            return list(configured)
+        return [
+            state.entity_id
+            for state in self.hass.states.async_all("weather")
+            if int(state.attributes.get("supported_features") or 0) & WEATHER_HOURLY
+        ]
+
+    def past_rain_sensor(self) -> str | None:
+        """A rain-rate sensor whose history gives the past 24 h when Open-Meteo is down.
+
+        The configured one, else the first precipitation-intensity sensor that is a
+        current reading (not a forecast such as ..._3h or ..._1d).
+        """
+        configured = self.entry.options.get(CONF_PAST_RAIN_SENSOR)
+        if configured:
+            return configured
+        for state in self.hass.states.async_all("sensor"):
+            if (
+                state.attributes.get("device_class") == "precipitation_intensity"
+                and not FORECAST_SENSOR.search(state.entity_id)
+            ):
+                return state.entity_id
+        return None
+
+    async def _refresh_from_backup(self, now: datetime, reason: str) -> bool:
+        """Rain (and today's high) from HA's own weather entities and rain history."""
+        future: list[RainHour] = []
+        forecast_from = None
+        high = None
+        for entity_id in self.backup_weather():
+            try:
+                future = await self._weather_forecast(entity_id)
+            except (HomeAssistantError, KeyError, TypeError, ValueError) as err:
+                _LOGGER.debug("Backup forecast from %s unavailable: %s", entity_id, err)
+                continue
+            forecast_from = entity_id
+            high = await self._daily_high(entity_id)
+            break
+        past: list[RainHour] = []
+        sensor = self.past_rain_sensor()
+        if sensor:
+            try:
+                past = await self._past_from_history(sensor, now)
+            except Exception as err:  # noqa: BLE001 - recorder may be absent or busy
+                _LOGGER.debug("Past rain from %s unavailable: %s", sensor, err)
+                past = []
+        if not future and not past:
+            return False
+        parts = []
+        if past:
+            parts.append(f"{sensor} history (past)")
+        if forecast_from:
+            parts.append(f"{forecast_from} (forecast)")
+        self._hours = future
+        if high is None:
+            high = day_max_temp(future, dt_util.now().date(), dt_util.get_default_time_zone())
+        self._temp_high_backup = high
+        self.rain = summarise(now, past, future, RAIN_WINDOW_HOURS, "Backup: " + ", ".join(parts))
+        self.rain_updated = now
+        missing = [] if past else ["past 24 h"]
+        if not forecast_from:
+            missing.append("forecast")
+        self.rain_error = f"Open-Meteo unavailable ({reason}); using backup" + (
+            f", no {' or '.join(missing)}" if missing else ""
+        )
+        return True
+
+    async def _daily_high(self, entity_id: str) -> float | None:
+        """Today's high from a weather entity's daily forecast, if it has one."""
+        try:
+            response = await self.hass.services.async_call(
+                "weather", "get_forecasts", {ATTR_ENTITY_ID: entity_id, "type": "daily"},
+                blocking=True, return_response=True,
+            )
+            today = dt_util.now().date()
+            for item in response[entity_id]["forecast"]:
+                when = dt_util.parse_datetime(str(item.get("datetime")))
+                if when is not None and dt_util.as_local(when).date() == today:
+                    return float(item["temperature"])
+        except (HomeAssistantError, KeyError, TypeError, ValueError):
+            return None
+        return None
+
+    async def _past_from_history(self, entity_id: str, now: datetime) -> list[RainHour]:
+        """Hourly rain for the past ~day from the recorded history of a rain-rate sensor."""
+        if "recorder" not in self.hass.config.components:
+            raise HomeAssistantError("recorder is not running")
+        from homeassistant.components.recorder import get_instance, history
+
+        start = now - timedelta(hours=RAIN_WINDOW_HOURS + 1)
+        states = await get_instance(self.hass).async_add_executor_job(
+            partial(
+                history.state_changes_during_period,
+                self.hass,
+                start,
+                now,
+                entity_id=entity_id,
+                no_attributes=True,
+                include_start_time_state=True,
+            )
+        )
+        points = []
+        for state in states.get(entity_id, []):
+            try:
+                points.append((state.last_changed, float(state.state)))
+            except (TypeError, ValueError):
+                points.append((state.last_changed, 0.0))  # unavailable: assume dry
+        current = self.hass.states.get(entity_id)
+        unit = (current.attributes.get("unit_of_measurement") if current else None) or "mm/h"
+        return intensity_hours(points, start, now, RATE_TO_MM_PER_H.get(unit, 1.0))
 
     def rain_total(self) -> float | None:
         return self.rain.total_mm if self.rain else None
@@ -536,9 +729,16 @@ class WaterHub:
         if self.rain_hold(tap_id):
             name = self.tap(tap_id).get(CONF_NAME)
             _LOGGER.info("Skipping %s: %.1f mm of rain in the 48 h window", name, total)
-            state.update(last_skip=dt_util.utcnow().isoformat(), last_skip_rain=total)
+            now_iso = dt_util.utcnow().isoformat()
+            state.update(last_skip=now_iso, last_skip_rain=total)
             state["last_result"] = RESULT_SKIPPED_RAIN
+            self._log({
+                "tap": tap_id, "name": name, "start": now_iso, "end": now_iso, "minutes": 0,
+                "litres": None, "result": RESULT_SKIPPED_RAIN, "reason": "schedule",
+                "slot": slot, "rain_mm": total, "rain_factor": 0.0,
+            })
             self._save()
+            self.notify()
             return
         band = self.band_today()
         factor = self.rain_factor(tap_id)
@@ -548,6 +748,7 @@ class WaterHub:
         )
         if amount <= 0:
             return
+        self._pending_factor[tap_id] = round(factor, 2)
         await self.async_water(tap_id, amount, None, "schedule", band)
 
     # ------------------------------------------------------------------ runs
@@ -611,6 +812,7 @@ class WaterHub:
             flow=bool(flow_entity),
             sequential=bool(cfg.get(CONF_SEQUENTIAL, True)),
             band=band,
+            rain_factor=self._pending_factor.pop(tap_id, None) if reason == "schedule" else None,
             cfg_max_seconds=float(cfg.get(CONF_MAX_MINUTES) or DEFAULT_MAX_MINUTES) * 60,
             last_sample=now,
         )
@@ -745,6 +947,21 @@ class WaterHub:
             last_minutes=round((end - run.started).total_seconds() / 60, 1),
             last_litres=round(run.litres, 1) if run.flow else None,
         )
+        self._log({
+            "tap": tap_id,
+            "name": run.name,
+            "start": run.started.isoformat(),
+            "end": end.isoformat(),
+            "minutes": round((end - run.started).total_seconds() / 60, 1),
+            "litres": round(run.litres, 1) if run.flow else None,
+            "target": run.target,
+            "mode": run.mode,
+            "band": run.band,
+            "reason": run.reason,
+            "slot": self.tap_state(tap_id).get("last_slot") if run.reason == "schedule" else None,
+            "rain_factor": run.rain_factor,
+            "result": result,
+        })
         self._save()
         self.notify()
 

@@ -186,7 +186,12 @@ async def test_failed_rain_fetch_retries_soon(hass: HomeAssistant, setup, rain, 
     aioclient_mock.clear_requests()
     aioclient_mock.get(OPEN_METEO_URL, exc=TimeoutError())
     await setup()
-    assert hass.states.get("sensor.garden_watering_rain_past_24_h").state == "unavailable"
+    # No rain data and no backup: unknown, but available so the card still loads.
+    assert hass.states.get("sensor.garden_watering_rain_past_24_h").state == "unknown"
+    window = hass.states.get("sensor.garden_watering_rain_past_and_next_24_h")
+    assert window.state == "unknown" and window.attributes["waterha"] == "rain"
+    assert window.attributes["taps"][0]["name"] == "Lawn"
+    assert "no backup" in window.attributes["error"]
     rain(1.0, 0.5)
     await advance(hass, freezer, 125, 25)
     assert float(hass.states.get("sensor.garden_watering_rain_past_24_h").state) == pytest.approx(1.0, abs=0.1)

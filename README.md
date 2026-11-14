@@ -29,6 +29,8 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Rain forecast from | **Open-Meteo** (default, no account) or a **weather entity** with an hourly forecast. Past rain and temperature always come from Open-Meteo for your home location. |
 | Cool day below | Today's forecast high below this is a cool day. Default 16 °C. |
 | Hot day from | Today's forecast high at or above this is a hot day. Default 23 °C. In between is warm. |
+| Backup forecast | Weather entities used when Open-Meteo is unreachable: the first with an hourly forecast gives the next 24 h, and its daily forecast today's high. Empty = every weather entity with an hourly forecast. |
+| Backup past rain | A rain-rate sensor (mm/h) whose recorded history gives the past 24 h when Open-Meteo is unreachable, e.g. `sensor.pirateweather_precip_intensity`. Empty = the first current rain-rate sensor. |
 
 **Taps**: on the WaterHA integration page, choose **Add tap**. Each tap has:
 
@@ -84,6 +86,21 @@ has Water now/Stop, Auto, One at a time, its cool/warm/hot amounts (today's is o
 one for one-tap presets or to type any value), rain threshold, its two slots (tick to turn a
 slot on or off, tap the time to change it), and what its next run will give after rain.
 
+### History card
+
+```yaml
+type: custom:waterha-history-card
+title: Watering history   # optional
+hours: 24                 # chart window, optional
+limit: 15                 # log rows before "Show all", optional
+```
+
+A timeline of the last 24 h with a row per tap: a bar for each run (blue ran, orange stopped
+early, red failed, pulsing while watering) and a green diamond for a rain skip. Below it, the
+log: when, which tap, minutes and litres, result, and whether it was a scheduled slot or
+manual, the day type and any rain reduction. WaterHA keeps 7 days of log in the
+`Watering log` sensor (its state is the number of runs in the last 24 h).
+
 ## Services
 
 - `waterha.water_now`: `entity_id` (the tap switch/valve or any of its WaterHA entities),
@@ -107,8 +124,14 @@ slot on or off, tap the time to change it), and what its next run will give afte
 
 Open-Meteo hourly precipitation and temperature for the home coordinates in Home
 Assistant, refreshed every 30 minutes and before a scheduled run if older than that.
-If rain data is unavailable at a scheduled time, the tap waters in full; if temperature is
-unavailable, it uses the warm-day amount.
+
+When Open-Meteo cannot be reached, WaterHA uses Home Assistant's own data instead (the
+card's source line says "Backup: …"): the hourly forecast of a weather entity for the next
+24 h and its daily forecast for today's high, and the recorded history of a rain-rate sensor
+for the past 24 h. Open-Meteo is tried again at every refresh and takes over when it is back.
+
+With no rain data at all at a scheduled time, the tap waters in full; with no temperature,
+it uses the warm-day amount. The card always loads, showing "–" until data arrives.
 
 ## Upgrading
 

@@ -8,12 +8,16 @@
           "forecast_source": "Rain forecast from",
           "weather_entity": "Weather entity",
           "cool_below": "Cool day below",
-          "hot_from": "Hot day from"
+          "hot_from": "Hot day from",
+          "backup_weather": "Backup forecast (weather entities)",
+          "past_rain_sensor": "Backup past rain (rain-rate sensor)"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
           "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
-          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day."
+          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
+          "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
+          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found."
         }
       }
     },
@@ -33,12 +37,16 @@
           "forecast_source": "Rain forecast from",
           "weather_entity": "Weather entity",
           "cool_below": "Cool day below",
-          "hot_from": "Hot day from"
+          "hot_from": "Hot day from",
+          "backup_weather": "Backup forecast (weather entities)",
+          "past_rain_sensor": "Backup past rain (rain-rate sensor)"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
           "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
-          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day."
+          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
+          "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
+          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found."
         }
       }
     },
@@ -190,6 +198,10 @@
           "warm": "Warm",
           "hot": "Hot"
         }
+      },
+      "watering_log": {
+        "name": "Watering log",
+        "unit_of_measurement": "runs"
       }
     },
     "switch": {

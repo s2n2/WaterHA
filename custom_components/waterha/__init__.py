@@ -16,8 +16,10 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_BACKUP_WEATHER,
     CONF_FLOW_SENSOR,
     CONF_MODE,
+    CONF_PAST_RAIN_SENSOR,
     CONF_TAP_ENTITY,
     DOMAIN,
     MODE_LITRES,
@@ -55,6 +57,13 @@ def _structure(entry: ConfigEntry) -> tuple[Any, ...]:
     )
     options = tuple(sorted((k, v) for k, v in entry.options.items() if k not in SOFT_OPTIONS))
     return taps, options
+
+
+def _backups(entry: ConfigEntry) -> tuple[Any, ...]:
+    return (
+        tuple(entry.options.get(CONF_BACKUP_WEATHER) or ()),
+        entry.options.get(CONF_PAST_RAIN_SENSOR),
+    )
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -120,15 +129,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> boo
     hub.notify()
     structure = _structure(entry)
 
+    backups = _backups(entry)
+
     async def _updated(hass: HomeAssistant, entry: WaterConfigEntry) -> None:
         # Settings edited from entities only need a refresh; added/removed taps,
         # a changed tap entity, mode or hub options need new entities.
-        nonlocal structure
+        nonlocal structure, backups
         new = _structure(entry)
         if new != structure:
             structure = new
             hass.config_entries.async_schedule_reload(entry.entry_id)
             return
+        if _backups(entry) != backups:
+            backups = _backups(entry)
+            hass.async_create_background_task(hub.async_refresh_rain(), f"{DOMAIN} rain")
         hub.notify()
 
     entry.async_on_unload(entry.add_update_listener(_updated))

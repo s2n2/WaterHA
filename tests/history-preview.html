@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WaterHA history preview</title>
+<style>
+  body { font-family: Roboto, system-ui, sans-serif; font-size: 14px; background: #f5f5f5; margin: 0; padding: 16px;
+         --primary-color: #039be5; --secondary-text-color: #727272; --primary-text-color: #212121;
+         --divider-color: #e0e0e0; --card-background-color: #fff; }
+  waterha-history-card { display: block; width: 620px; max-width: 100%; }
+</style>
+</head>
+<body>
+<waterha-history-card id="card"></waterha-history-card>
+<script>
+customElements.define("ha-card", class extends HTMLElement {
+  connectedCallback() { this.style.cssText = "display:block;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.15)"; }
+});
+</script>
+<script src="../custom_components/waterha/frontend/waterha-card.js"></script>
+<script>
+// A fake day: this morning's queued 06:00 runs, an evening run, a rain skip, and one running now.
+const h = (hoursAgo, min = 0) => new Date(Date.now() - hoursAgo * 3600000 + min * 60000).toISOString();
+const runs = [
+  { tap: "t2", name: "Roses", start: h(0.1), end: null, minutes: 4.2, litres: 30, target: 6, mode: "minutes", reason: "manual", result: "running" },
+  { tap: "t1", name: "Lawn", start: h(5), end: h(5, 8), minutes: 8, litres: 71, target: 8, mode: "minutes", reason: "schedule", slot: 2, band: "warm", rain_factor: 1, result: "completed" },
+  { tap: "t3", name: "Front garden", start: h(5), end: h(5), minutes: 0, reason: "schedule", slot: 2, rain_mm: 6.1, rain_factor: 0, result: "skipped_rain" },
+  { tap: "t3", name: "Front garden", start: h(16, 14), end: h(16, 21), minutes: 7.6, litres: 52, target: 10, mode: "minutes", reason: "schedule", slot: 1, band: "warm", rain_factor: 0.76, result: "completed" },
+  { tap: "t2", name: "Roses", start: h(16, 8), end: h(16, 12), minutes: 4, litres: 22, target: 4, mode: "minutes", reason: "schedule", slot: 1, band: "warm", result: "completed" },
+  { tap: "t1", name: "Lawn", start: h(16), end: h(16, 8), minutes: 8, litres: 69, target: 8, mode: "minutes", reason: "schedule", slot: 1, band: "warm", result: "completed" },
+  { tap: "t4", name: "Back Garden", start: h(20), end: h(20, 2), minutes: 2.1, litres: 0, target: 7, mode: "minutes", reason: "manual", result: "stopped" },
+];
+document.getElementById("card").setConfig({});
+document.getElementById("card").hass = { states: { "sensor.log": { entity_id: "sensor.log", state: "5", last_updated: "1", attributes: {
+  waterha: "log", minutes_24h: 34, litres_24h: 244,
+  taps: [{ id: "t1", name: "Lawn" }, { id: "t2", name: "Roses" }, { id: "t3", name: "Front garden" }, { id: "t4", name: "Back Garden" }],
+  runs } } } };
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-/* WaterHA card: rain either side of now, and every tap with its controls.
+/* WaterHA cards (main + history): rain either side of now, and every tap with its controls.
  *
  *   type: custom:waterha-card
  *   title: Garden            # optional
@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 const BAND = {
   cool: ["Cool", "mdi:snowflake"],
@@ -299,10 +299,10 @@ class WaterHACard extends HTMLElement {
         <label class="sw"><input type="checkbox" data-toggle="${esc(t.automatic)}" ${auto ? "checked" : ""}/> Auto</label>
         <label class="sw" title="Wait for other one-at-a-time taps to finish"><input type="checkbox" data-toggle="${esc(t.one_at_a_time)}" ${seq ? "checked" : ""}/> One at a time</label>
       </div>
-      <div class="row ctl">
+      <div class="row ctl line">
         <span class="trio" title="Cool / warm / hot day amounts (${unit})">${amounts}<span class="unit">${unit}</span></span>
         <button class="val${this._edit === t.rain_threshold ? " open" : ""}" data-edit="${esc(t.rain_threshold)}" title="Rain threshold (past + next 24 h)">
-          <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))} mm` : "off"}</button>
+          <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))}<span class="u">mm</span>` : "off"}</button>
         ${slots}
       </div>
       ${editing ? this._editor(t[`amount_${editing}`], unit, `Water on a ${BAND[editing][0].toLowerCase()} day for`) : ""}
@@ -350,15 +350,31 @@ const STYLE = `<style>
   .stat.today { text-align: left; border-radius: 8px; --mdc-icon-size: 18px; }
   .stat.today b { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
   .stat.today.open b, .stat.today:hover b { color: var(--primary-color); }
-  .trio { display: inline-flex; align-items: center; gap: 4px; }
+  .trio { display: inline-flex; align-items: center; gap: 3px; }
+  .ctl.line { flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .ctl.line::-webkit-scrollbar { display: none; }
+  .ctl.line > * { flex: none; }
+  .ctl.line .val { min-height: 30px; padding: 0 7px; gap: 2px; --mdc-icon-size: 16px; }
+  .ctl.line .slot { min-height: 30px; padding: 0 6px 0 2px; --mdc-icon-size: 16px; }
+  .ctl.line .slot input { width: 15px; height: 15px; margin: 0 2px; }
+  .u { font-size: 0.8em; color: var(--secondary-text-color); margin-left: 1px; }
+  /* Phones: tighter, unit labels and slot icons dropped so the values line still fits. */
+  .tap { container-type: inline-size; }
+  @container (max-width: 440px) {
+    .ctl.line { gap: 4px; }
+    .ctl.line .trio { gap: 2px; }
+    .ctl.line .val, .ctl.line .val.band { padding: 0 5px; --mdc-icon-size: 15px; }
+    .ctl.line .slot { padding: 0 5px 0 1px; }
+    .ctl.line .slot ha-icon, .ctl.line .u, .ctl.line .unit { display: none; }
+  }
   .slot { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 8px 0 4px;
           border: 1px dashed var(--divider-color); border-radius: 16px; color: var(--secondary-text-color);
           --mdc-icon-size: 18px; }
   .slot.on { border-style: solid; color: var(--primary-text-color); }
   .slot input { margin: 0 2px; cursor: pointer; }
   .slottime { display: inline-flex; align-items: center; gap: 3px; }
-  .trio .unit { font-size: 0.85em; color: var(--secondary-text-color); }
-  .val.band { padding: 0 8px; }
+  .trio .unit { font-size: 0.8em; color: var(--secondary-text-color); }
+  .val.band { padding: 0 6px; }
   .val.today { border-color: var(--primary-color); border-width: 2px; font-weight: 500; }
   .stat { display: flex; flex-direction: column; }
   .stat span { font-size: 0.8em; color: var(--secondary-text-color); }
@@ -417,4 +433,209 @@ if (!customElements.get("waterha-card")) {
     description: "Rain past and next 24 h, and your automated taps.",
   });
   console.info(`%c WaterHA card ${VERSION} `, "background:#039be5;color:#fff");
+}
+
+
+/* WaterHA history card: what ran, and when.
+ *
+ *   type: custom:waterha-history-card
+ *   title: Watering history   # optional
+ *   hours: 24                 # chart window, optional
+ *   limit: 15                 # log rows shown before "Show more", optional
+ */
+const RUN_COLOR = {
+  running: "var(--info-color, #039be5)",
+  completed: "var(--info-color, #039be5)",
+  max_time: "var(--warning-color, #ffa600)",
+  no_flow: "var(--warning-color, #ffa600)",
+  stopped: "var(--warning-color, #ffa600)",
+  stopped_externally: "var(--warning-color, #ffa600)",
+  interrupted_by_restart: "var(--error-color, #db4437)",
+  failed: "var(--error-color, #db4437)",
+  skipped_rain: "var(--success-color, #43a047)",
+};
+const RUN_TEXT = { ...RESULT, running: "watering now", completed: "done" };
+
+function hm(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+class WaterHAHistoryCard extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    this._sig = null;
+    this._more = false;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      this.shadowRoot.addEventListener("click", (ev) => {
+        if (ev.composedPath().some((n) => n.dataset?.more)) {
+          this._more = !this._more;
+          this._render(this._logState());
+        }
+      });
+    }
+  }
+
+  static getStubConfig() {
+    return { title: "Watering history" };
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const s = this._logState();
+    // Redraw on new data, and at least each minute so the chart's "now" moves.
+    const sig = `${s?.last_updated}|${Math.floor(Date.now() / 60000)}`;
+    if (sig === this._sig) return;
+    this._sig = sig;
+    this._render(s);
+  }
+
+  _logState() {
+    const states = this._hass.states;
+    if (this._config.entity) return states[this._config.entity];
+    return Object.values(states).find((s) => s.attributes && s.attributes.waterha === "log");
+  }
+
+  _render(s) {
+    const title = this._config.title ?? "Watering history";
+    if (!s) {
+      this.shadowRoot.innerHTML = `${HSTYLE}<ha-card header="${esc(title)}"><div class="empty">
+        No WaterHA watering log found. Update WaterHA to 0.4 or later.</div></ha-card>`;
+      return;
+    }
+    const a = s.attributes;
+    const runs = a.runs || [];
+    const hours = this._config.hours || 24;
+    const limit = this._config.limit || 15;
+    const shown = this._more ? runs : runs.slice(0, limit);
+    const totals = [
+      `${s.state} run${s.state === "1" ? "" : "s"}`,
+      a.minutes_24h ? `${fmt(a.minutes_24h)} min` : null,
+      a.litres_24h != null ? `${fmt(a.litres_24h)} L` : null,
+    ].filter(Boolean).join(" · ");
+    this.shadowRoot.innerHTML = `${HSTYLE}
+      <ha-card>
+        <div class="head"><div class="title">${esc(title)}</div><div class="tot">Last ${hours} h: ${esc(totals)}</div></div>
+        ${this._timeline(a.taps || [], runs, hours)}
+        <div class="log">
+          ${shown.length ? shown.map((r) => this._row(r)).join("") : `<div class="empty">Nothing has run yet.</div>`}
+        </div>
+        ${runs.length > limit ? `<button class="more" data-more="1">${this._more ? "Show fewer" : `Show all ${runs.length}`}</button>` : ""}
+      </ha-card>`;
+  }
+
+  _timeline(taps, runs, hours) {
+    const now = Date.now();
+    const from = now - hours * 3600000;
+    // One lane per tap; taps no longer configured still get a lane if they ran.
+    const lanes = taps.map((t) => ({ id: t.id, name: t.name }));
+    for (const r of runs) if (!lanes.some((l) => l.id === r.tap)) lanes.push({ id: r.tap, name: r.name || "?" });
+    if (!lanes.length) return "";
+    const L = 92, W = 480, lane = 22, top = 4;
+    const H = top + lanes.length * lane;
+    const x = (t) => L + ((t - from) / (now - from)) * (W - L);
+    let ticks = "";
+    const step = hours <= 24 ? 6 : 12;
+    const first = new Date(from);
+    first.setMinutes(0, 0, 0);
+    for (let t = first.getTime() + 3600000; t < now; t += 3600000) {
+      const d = new Date(t);
+      if (d.getHours() % step) continue;
+      ticks += `<line x1="${x(t)}" x2="${x(t)}" y1="${top}" y2="${H}" class="grid"/>
+        <text x="${x(t)}" y="${H + 12}" class="lbl" text-anchor="middle">${d.getHours() === 0 ? d.toLocaleDateString([], { weekday: "short" }) : hm(d.toISOString())}</text>`;
+    }
+    const rows = lanes.map((l, i) => {
+      const y = top + i * lane;
+      const bars = runs.filter((r) => r.tap === l.id).map((r) => {
+        const s = new Date(r.start).getTime();
+        const e = r.end ? new Date(r.end).getTime() : now;
+        if (e < from) return "";
+        const color = RUN_COLOR[r.result] || "var(--secondary-text-color)";
+        const tip = `${r.name || l.name}: ${when(r.start)}${r.end && r.end !== r.start ? `–${hm(r.end)}` : ""} · ${RUN_TEXT[r.result] || r.result}${r.minutes ? ` · ${fmt(r.minutes)} min` : ""}${r.litres != null ? ` · ${fmt(r.litres)} L` : ""}`;
+        if (r.result === "skipped_rain" || r.minutes === null) {
+          // A skip (or a run of unknown length): a marker, not a bar.
+          return `<g><title>${esc(tip)}</title><path d="M${x(s)} ${y + 4} l4 7 l-4 7 l-4 -7 z" fill="${color}"/></g>`;
+        }
+        const x1 = x(Math.max(s, from));
+        const w = Math.max(3, x(e) - x1);
+        return `<rect x="${x1.toFixed(1)}" y="${y + 4}" width="${w.toFixed(1)}" height="${lane - 8}" rx="3"
+          fill="${color}"${r.result === "running" ? ' class="live"' : ""}><title>${esc(tip)}</title></rect>`;
+      }).join("");
+      return `<text x="0" y="${y + lane / 2 + 4}" class="name">${esc(l.name)}</text>
+        <line x1="${L}" x2="${W}" y1="${y + lane}" y2="${y + lane}" class="lane"/>${bars}`;
+    }).join("");
+    return `<svg class="tl" viewBox="0 0 ${W} ${H + 16}" role="img" aria-label="Watering in the last ${hours} hours">
+      ${ticks}${rows}<line x1="${W - 0.5}" x2="${W - 0.5}" y1="${top}" y2="${H}" class="now"/>
+    </svg>
+    <div class="legend"><span style="--c:${RUN_COLOR.completed}">ran</span><span style="--c:${RUN_COLOR.stopped}">stopped early</span><span style="--c:${RUN_COLOR.failed}">failed</span><span class="dia" style="--c:${RUN_COLOR.skipped_rain}">skipped for rain</span></div>`;
+  }
+
+  _row(r) {
+    const color = RUN_COLOR[r.result] || "var(--secondary-text-color)";
+    const amount = r.result === "skipped_rain"
+      ? (r.rain_mm != null ? `${fmt(r.rain_mm)} mm rain` : "")
+      : [r.minutes != null ? `${fmt(r.minutes)} min` : null, r.litres != null ? `${fmt(r.litres)} L` : null].filter(Boolean).join(" · ");
+    const detail = [
+      r.reason === "schedule" ? (r.slot ? `slot ${r.slot}` : "scheduled") : r.reason === "manual" ? "manual" : r.reason,
+      r.band ? `${r.band} day` : null,
+      r.rain_factor != null && r.rain_factor > 0 && r.rain_factor < 1 ? `−${Math.round((1 - r.rain_factor) * 100)}% rain` : null,
+      r.target && r.result !== "completed" && r.result !== "running" && r.result !== "skipped_rain" ? `of ${fmt(r.target)} ${r.mode === "litres" ? "L" : "min"}` : null,
+    ].filter(Boolean).join(" · ");
+    return `<div class="row">
+      <span class="dot" style="background:${color}"></span>
+      <span class="when">${esc(when(r.start))}${r.end && r.end !== r.start ? `–${esc(hm(r.end))}` : ""}</span>
+      <span class="who">${esc(r.name || "")}</span>
+      <span class="amt">${esc(amount)}</span>
+      <span class="res" style="color:${color}">${esc(RUN_TEXT[r.result] || r.result)}</span>
+      ${detail ? `<span class="det">${esc(detail)}</span>` : ""}
+    </div>`;
+  }
+}
+
+const HSTYLE = `<style>
+  ha-card { padding: 12px 16px 8px; }
+  .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+  .title { font-size: 1.25em; font-weight: 500; flex: 1; }
+  .tot { font-size: 0.85em; color: var(--secondary-text-color); }
+  .tl { width: 100%; display: block; }
+  .tl .name { font-size: 11px; fill: var(--primary-text-color); }
+  .tl .lbl { font-size: 9px; fill: var(--secondary-text-color); }
+  .tl .grid { stroke: var(--divider-color); stroke-dasharray: 2 3; }
+  .tl .lane { stroke: var(--divider-color); }
+  .tl .now { stroke: var(--primary-text-color); stroke-width: 1; }
+  .tl .live { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.55; } }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.75em; color: var(--secondary-text-color); margin: 2px 0 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 8px; border-radius: 2px;
+    background: var(--c); margin-right: 4px; }
+  .legend span.dia::before { width: 7px; height: 7px; transform: rotate(45deg); border-radius: 1px; }
+  .log { border-top: 1px solid var(--divider-color); }
+  .row { display: grid; grid-template-columns: 10px minmax(110px, auto) 1fr auto auto; column-gap: 8px;
+         align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--divider-color); font-size: 0.9em; }
+  .row:last-child { border-bottom: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+  .when { color: var(--secondary-text-color); white-space: nowrap; }
+  .who { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .amt { white-space: nowrap; }
+  .res { white-space: nowrap; font-size: 0.9em; }
+  .det { grid-column: 3 / -1; font-size: 0.8em; color: var(--secondary-text-color); }
+  .more { font: inherit; color: var(--primary-color); background: none; border: 0; cursor: pointer; padding: 8px 0 4px; }
+  .empty { padding: 12px 0; color: var(--secondary-text-color); }
+  @container (max-width: 400px) { .row { grid-template-columns: 10px auto 1fr; } .amt, .res { grid-column: 3; } }
+  ha-card { container-type: inline-size; }
+</style>`;
+
+if (!customElements.get("waterha-history-card")) {
+  customElements.define("waterha-history-card", WaterHAHistoryCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "waterha-history-card",
+    name: "WaterHA history",
+    description: "What watered and when: a 24 h timeline and a log.",
+  });
 }

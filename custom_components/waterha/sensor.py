@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -35,6 +35,8 @@ from .const import (
 )
 from .entity import TapEntity, WaterEntity, add_entities
 from .hub import WaterHub
+
+LOG_SHOWN = 150  # newest log entries exposed to the history card
 
 # Role -> (platform, unique-id key) of each tap entity, for the card.
 TAP_ROLES = {
@@ -70,6 +72,7 @@ async def async_setup_entry(
             RainWindowSensor(hub),
             TempTodaySensor(hub),
             DayTypeSensor(hub),
+            WateringLogSensor(hub),
         ],
         lambda hub, tap_id: [
             TapStatusSensor(hub, tap_id),
@@ -92,9 +95,6 @@ class RainSensor(WaterEntity, SensorEntity):
             return None
         return rain.past_mm if self._attr_translation_key == "rain_past_24h" else rain.next_mm
 
-    @property
-    def available(self) -> bool:
-        return self.hub.rain is not None
 
 
 class RainWindowSensor(RainSensor):
@@ -174,6 +174,39 @@ class DayTypeSensor(WaterEntity, SensorEntity):
             "temp_max_today": self.hub.temp_max_today(),
             "cool_below": self.hub.cool_below,
             "hot_from": self.hub.hot_from,
+        }
+
+
+class WateringLogSensor(WaterEntity, SensorEntity):
+    """Runs in the last 24 h; the log itself (7 days) is in its attributes for the history card."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _unrecorded_attributes = frozenset({"runs", "taps", "minutes_24h", "litres_24h"})
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "watering_log")
+
+    def _last_day(self) -> list[dict[str, Any]]:
+        cutoff = (dt_util.utcnow() - timedelta(hours=24)).isoformat()
+        return [
+            item for item in self.hub.log_view()
+            if item.get("result") != "skipped_rain" and (item.get("end") or "9") >= cutoff
+        ]
+
+    @property
+    def native_value(self) -> int:
+        return len(self._last_day())
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        day = self._last_day()
+        litres = [item["litres"] for item in day if item.get("litres") is not None]
+        return {
+            "waterha": "log",
+            "taps": [{"id": tap_id, "name": sub.data.get(CONF_NAME)} for tap_id, sub in self.hub.taps.items()],
+            "minutes_24h": round(sum(item.get("minutes") or 0 for item in day), 1),
+            "litres_24h": round(sum(litres), 1) if litres else None,
+            "runs": self.hub.log_view()[:LOG_SHOWN],
         }
 
 

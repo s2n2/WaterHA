@@ -19,6 +19,7 @@ from homeassistant.helpers import selector
 from .const import (
     BANDS,
     CONF_AMOUNT,
+    CONF_BACKUP_WEATHER,
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
@@ -28,6 +29,7 @@ from .const import (
     CONF_MAX_MINUTES,
     CONF_MODE,
     CONF_NAME,
+    CONF_PAST_RAIN_SENSOR,
     CONF_RAIN_THRESHOLD,
     CONF_SEQUENTIAL,
     CONF_SLOT_1,
@@ -83,6 +85,16 @@ def _hub_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_COOL_BELOW, default=defaults.get(CONF_COOL_BELOW, DEFAULT_COOL_BELOW)
             ): TEMP,
             vol.Required(CONF_HOT_FROM, default=defaults.get(CONF_HOT_FROM, DEFAULT_HOT_FROM)): TEMP,
+            vol.Optional(
+                CONF_BACKUP_WEATHER,
+                description={"suggested_value": defaults.get(CONF_BACKUP_WEATHER)},
+            ): selector.EntitySelector(selector.EntitySelectorConfig(domain="weather", multiple=True)),
+            vol.Optional(
+                CONF_PAST_RAIN_SENSOR,
+                description={"suggested_value": defaults.get(CONF_PAST_RAIN_SENSOR)},
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="precipitation_intensity")
+            ),
         }
     )
 
@@ -144,10 +156,12 @@ class WaterOptionsFlow(OptionsFlow):
         if user_input is not None:
             errors = _hub_errors(user_input)
             if not errors:
-                # Keep options this form does not show (none today, but future-proof).
-                return self.async_create_entry(
-                    data={**self.config_entry.options, **_hub_options(user_input)}
-                )
+                data = {**self.config_entry.options, **_hub_options(user_input)}
+                # A cleared optional field is absent from the form result: drop it too.
+                for key in (CONF_BACKUP_WEATHER, CONF_PAST_RAIN_SENSOR, CONF_WEATHER_ENTITY):
+                    if not user_input.get(key):
+                        data.pop(key, None)
+                return self.async_create_entry(data=data)
         return self.async_show_form(
             step_id="init",
             data_schema=_hub_schema(user_input or dict(self.config_entry.options)),
