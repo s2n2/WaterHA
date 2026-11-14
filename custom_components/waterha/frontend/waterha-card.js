@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const WHEN = { always: "Every day", warm_hot: "Warm & hot days", hot: "Hot days only" };
@@ -297,12 +297,11 @@ class WaterHACard extends HTMLElement {
       const icon = parseInt(time, 10) < 12 ? "mdi:weather-sunset-up" : "mdi:weather-night";
       const when = st[t[`slot_${n}_when`]]?.state || "always";
       const share = parseFloat(st[t[`slot_${n}_share`]]?.state || "100");
-      const badge = [when === "hot" ? "hot" : when === "warm_hot" ? "warm+" : "", share < 100 ? `${fmt(share)}%` : ""]
-        .filter(Boolean).join(" ");
+      const label = [WHEN[when] || WHEN.always, share < 100 ? `${fmt(share)}%` : ""].filter(Boolean).join(" · ");
       const key = `__slot${n}:${t.id}`;
       return `<span class="slot${on ? " on" : ""}${this._edit === key ? " open" : ""}">
         <input type="checkbox" data-toggle="${esc(sw)}" ${on ? "checked" : ""} aria-label="Slot ${n} on"/>
-        <button class="slottime" data-edit="${esc(key)}" title="Slot ${n}: time, which days, how much"><ha-icon icon="${icon}"></ha-icon>${esc(time || "–")}${badge ? `<span class="badge">${esc(badge)}</span>` : ""}</button>
+        <button class="slottime" data-edit="${esc(key)}" title="Slot ${n}: time, which days, how much"><ha-icon icon="${icon}"></ha-icon><b>${esc(time || "–")}</b><span class="what">${esc(label)}</span></button>
       </span>`;
     }).join("");
     const editSlot = [1, 2].find((n) => this._edit === `__slot${n}:${t.id}`);
@@ -353,8 +352,8 @@ class WaterHACard extends HTMLElement {
         <span class="trio" title="Cool / warm / hot day amounts (${unit})">${amounts}<span class="unit">${unit}</span></span>
         <button class="val${this._edit === t.rain_threshold ? " open" : ""}" data-edit="${esc(t.rain_threshold)}" title="Rain threshold (past + next 24 h)">
           <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))}<span class="u">mm</span>` : "off"}</button>
-        ${slots}
       </div>
+      <div class="row ctl slots">${slots}</div>
       <div class="row days" role="group" aria-label="Days">${dayChips}</div>
       ${editSlot ? this._slotEditor(t, editSlot) : ""}
       ${editing ? this._editor(t[`amount_${editing}`], unit, `Water on a ${BAND[editing][0].toLowerCase()} day for`) : ""}
@@ -427,7 +426,6 @@ const STYLE = `<style>
     .ctl.line .val, .ctl.line .val.band { padding: 0 5px; --mdc-icon-size: 15px; }
     .ctl.line .slot { padding: 0 5px 0 1px; }
     .ctl.line .slot ha-icon, .ctl.line .u, .ctl.line .unit { display: none; }
-    .ctl.line .badge { margin-left: 1px; padding: 0 2px; font-size: 0.6em; }
     .ctl.line .slot input { margin: 0 1px; }
   }
   .slot { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 8px 0 4px;
@@ -437,8 +435,11 @@ const STYLE = `<style>
   .slot input { margin: 0 2px; cursor: pointer; }
   .slottime { display: inline-flex; align-items: center; gap: 3px; }
   .slot.open { border-color: var(--primary-color); }
-  .badge { font-size: 0.7em; margin-left: 3px; padding: 0 4px; border-radius: 6px;
-           background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .ctl.slots { gap: 6px; }
+  .slots .slot { min-height: 32px; padding: 0 10px 0 4px; }
+  .slottime b { font-weight: 500; }
+  .slottime .what { font-size: 0.8em; color: var(--secondary-text-color); margin-left: 4px; }
+  .slot.on .slottime .what { color: var(--primary-text-color); }
   .days { margin-top: 6px; gap: 4px; flex-wrap: nowrap; }
   .day { width: 30px; height: 26px; border-radius: 13px; font-size: 0.85em; border: 1px solid var(--divider-color);
          color: var(--secondary-text-color); }

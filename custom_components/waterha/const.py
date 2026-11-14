@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 PLATFORMS = [
     Platform.BUTTON,
