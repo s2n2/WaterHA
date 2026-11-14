@@ -6,7 +6,11 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
+const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
+const WHEN = { always: "Every day", warm_hot: "Warm & hot days", hot: "Hot days only" };
+const SHARES = [100, 75, 50, 30, 20];
 
 const BAND = {
   cool: ["Cool", "mdi:snowflake"],
@@ -94,10 +98,11 @@ class WaterHACard extends HTMLElement {
     const taps = rain?.attributes?.taps || [];
     const ids = [rain?.entity_id];
     const a0 = rain?.attributes || {};
-    ids.push(a0.cool_below_entity, a0.hot_from_entity);
+    ids.push(a0.cool_below_entity, a0.hot_from_entity, a0.et_cool_below_entity, a0.et_hot_from_entity);
     for (const t of taps) {
       ids.push(t.status, t.next_run, t.automatic, t.one_at_a_time, t.amount_cool, t.amount_warm,
-        t.amount_hot, t.rain_threshold, t.start_time, t.start_time_2, t.slot_1, t.slot_2);
+        t.amount_hot, t.rain_threshold, t.start_time, t.start_time_2, t.slot_1, t.slot_2,
+        t.slot_1_when, t.slot_2_when, t.slot_1_share, t.slot_2_share);
     }
     const sig = ids.map((id) => {
       const s = id && hass.states[id];
@@ -159,13 +164,45 @@ class WaterHACard extends HTMLElement {
   }
 
   _splitsEditor(a) {
-    const input = (id, v) => `<input type="number" inputmode="decimal" step="0.5" data-input="${esc(id)}"
-      placeholder="${esc(fmt(v))}" aria-label="°C"/>`;
+    const input = (id, v, unit) => `<input type="number" inputmode="decimal" step="0.5" data-input="${esc(id)}"
+      placeholder="${esc(fmt(v))}" aria-label="${unit}"/>`;
     return `<div class="editor">
-      <span class="elabel">Day type from today's forecast high (all taps)</span>
+      <span class="elabel">Day type, for all taps: the hotter of today's forecast high and evapotranspiration
+        (water pulled out by heat, sun, wind and dry air)</span>
       <div class="chips">
-        <span class="custom"><ha-icon icon="mdi:snowflake"></ha-icon> cool below ${input(a.cool_below_entity, a.cool_below)} °C</span>
-        <span class="custom"><ha-icon icon="mdi:white-balance-sunny"></ha-icon> hot from ${input(a.hot_from_entity, a.hot_from)} °C</span>
+        <span class="custom"><ha-icon icon="mdi:snowflake"></ha-icon> cool below ${input(a.cool_below_entity, a.cool_below, "°C")} °C</span>
+        <span class="custom"><ha-icon icon="mdi:white-balance-sunny"></ha-icon> hot from ${input(a.hot_from_entity, a.hot_from, "°C")} °C</span>
+      </div>
+      <div class="chips">
+        <span class="custom"><ha-icon icon="mdi:weather-windy"></ha-icon> ET cool below ${input(a.et_cool_below_entity, a.et_cool_below, "mm")} mm</span>
+        <span class="custom">hot from ${input(a.et_hot_from_entity, a.et_hot_from, "mm")} mm</span>
+        <span class="custom">today ${a.et_today != null ? `${fmt(a.et_today)} mm` : "–"}</span>
+        <button class="chip done" data-close="1" aria-label="Close">✕</button>
+      </div>
+    </div>`;
+  }
+
+  _slotEditor(t, n) {
+    const st = this._hass.states;
+    const tm = n === 1 ? t.start_time : t.start_time_2;
+    const whenId = t[`slot_${n}_when`];
+    const shareId = t[`slot_${n}_share`];
+    const when = st[whenId]?.state || "always";
+    const share = parseFloat(st[shareId]?.state || "100");
+    const whenChips = Object.entries(WHEN).map(([k, label]) =>
+      `<button class="chip${when === k ? " on" : ""}" data-select="${esc(whenId)}" data-v="${k}">${label}</button>`).join("");
+    const shareChips = SHARES.map((v) =>
+      `<button class="chip${share === v ? " on" : ""}" data-set="${esc(shareId)}" data-v="${v}" data-keep="1">${v}%</button>`).join("");
+    return `<div class="editor">
+      <span class="elabel">Slot ${n}: runs on</span>
+      <div class="chips">${whenChips}</div>
+      <span class="elabel">Gives this much of the day-type amount</span>
+      <div class="chips">${shareChips}
+        <span class="custom"><input type="number" inputmode="numeric" min="5" max="100" step="5" data-input="${esc(shareId)}"
+          placeholder="${esc(fmt(share))}" aria-label="Percent"/> %</span>
+      </div>
+      <div class="chips">
+        <button class="chip" data-more="${esc(tm)}"><ha-icon icon="mdi:clock-outline"></ha-icon> Change time (${esc((st[tm]?.state || "").slice(0, 5))})</button>
         <button class="chip done" data-close="1" aria-label="Close">✕</button>
       </div>
     </div>`;
@@ -199,7 +236,8 @@ class WaterHACard extends HTMLElement {
           <div class="stat"><span>Next 24 h</span><b>${mm(a.next_24h)}</b></div>
           <div class="stat total"><span>Total</span><b>${mm(total === "unknown" || total === "unavailable" ? null : total)}</b></div>
           <button class="stat today${this._edit === "__splits" ? " open" : ""}" data-edit="__splits" title="Change the cool / warm / hot split">
-            <span>Today</span><b><ha-icon icon="${BAND[a.day_type]?.[1] || "mdi:thermometer"}"></ha-icon>${esc(BAND[a.day_type]?.[0] || "–")}${a.temp_max_today != null ? ` ${fmt(a.temp_max_today)}°` : ""}</b>
+            <span>Today</span><b><ha-icon icon="${a.day_type_by === "evapotranspiration" ? "mdi:weather-windy" : BAND[a.day_type]?.[1] || "mdi:thermometer"}"></ha-icon>${esc(BAND[a.day_type]?.[0] || "–")}${a.temp_max_today != null ? ` ${fmt(a.temp_max_today)}°` : ""}</b>
+            ${a.et_today != null ? `<em>ET ${fmt(a.et_today)} mm${a.day_type_by === "evapotranspiration" ? " (dry/windy)" : ""}</em>` : ""}
           </button>
         </div>
         ${this._edit === "__splits" ? this._splitsEditor(a) : ""}
@@ -253,14 +291,25 @@ class WaterHACard extends HTMLElement {
     const editing = ["cool", "warm", "hot"].find((b) => this._edit === t[`amount_${b}`]);
     // Two daily slots: tick to turn a slot on/off, tap the time to change it.
     const slots = [[t.slot_1, t.start_time], [t.slot_2, t.start_time_2]].map(([sw, tm], i) => {
+      const n = i + 1;
       const on = st[sw]?.state === "on";
       const time = (st[tm]?.state || "").slice(0, 5);
       const icon = parseInt(time, 10) < 12 ? "mdi:weather-sunset-up" : "mdi:weather-night";
-      return `<span class="slot${on ? " on" : ""}">
-        <input type="checkbox" data-toggle="${esc(sw)}" ${on ? "checked" : ""} aria-label="Slot ${i + 1} on"/>
-        <button class="slottime" data-more="${esc(tm)}" title="Slot ${i + 1} time"><ha-icon icon="${icon}"></ha-icon>${esc(time || "–")}</button>
+      const when = st[t[`slot_${n}_when`]]?.state || "always";
+      const share = parseFloat(st[t[`slot_${n}_share`]]?.state || "100");
+      const badge = [when === "hot" ? "hot" : when === "warm_hot" ? "warm+" : "", share < 100 ? `${fmt(share)}%` : ""]
+        .filter(Boolean).join(" ");
+      const key = `__slot${n}:${t.id}`;
+      return `<span class="slot${on ? " on" : ""}${this._edit === key ? " open" : ""}">
+        <input type="checkbox" data-toggle="${esc(sw)}" ${on ? "checked" : ""} aria-label="Slot ${n} on"/>
+        <button class="slottime" data-edit="${esc(key)}" title="Slot ${n}: time, which days, how much"><ha-icon icon="${icon}"></ha-icon>${esc(time || "–")}${badge ? `<span class="badge">${esc(badge)}</span>` : ""}</button>
       </span>`;
     }).join("");
+    const editSlot = [1, 2].find((n) => this._edit === `__slot${n}:${t.id}`);
+    // Days of the week: tap to toggle.
+    const days = a.days || [];
+    const dayChips = DAY_KEYS.map((d, i) =>
+      `<button class="day${days.includes(d) ? " on" : ""}" data-day="${d}" data-tap="${esc(t.status)}" title="${d}">${DAY_LETTERS[i]}</button>`).join("");
     const run = a.run;
     let progress = "";
     if (run) {
@@ -279,8 +328,9 @@ class WaterHACard extends HTMLElement {
         : factor < 1
           ? `−${Math.round((1 - factor) * 100)}% for ${rainNum.toFixed(1)} mm rain`
           : `skips at ${fmt(thrNum)} mm`;
-    const plan = factor > 0 && a.scheduled_amount != null
-      ? ` · ${fmt(a.scheduled_amount)} ${unit} (${(BAND[a.day_type]?.[0] || "").toLowerCase()} day)`
+    const todays = (a.slot_plan || []).filter((p) => p.runs_today);
+    const plan = factor > 0 && todays.length
+      ? ` · ${todays.map((p) => `${fmt(p.amount)} ${unit}`).join(" + ")} (${(BAND[a.day_type]?.[0] || "").toLowerCase()} day)`
       : "";
     const last = a.last_result
       ? `Last: ${esc(RESULT[a.last_result] || a.last_result)}${a.last_run ? ` ${esc(when(a.last_result === "skipped_rain" ? a.last_skip : a.last_run))}` : ""}${a.last_litres != null ? ` · ${a.last_litres} L` : a.last_minutes != null ? ` · ${a.last_minutes} min` : ""}`
@@ -305,6 +355,8 @@ class WaterHACard extends HTMLElement {
           <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))}<span class="u">mm</span>` : "off"}</button>
         ${slots}
       </div>
+      <div class="row days" role="group" aria-label="Days">${dayChips}</div>
+      ${editSlot ? this._slotEditor(t, editSlot) : ""}
       ${editing ? this._editor(t[`amount_${editing}`], unit, `Water on a ${BAND[editing][0].toLowerCase()} day for`) : ""}
       ${this._edit === t.rain_threshold ? this._editor(t.rain_threshold, "mm") : ""}
       <div class="sub">${auto && a.next_run ? `Next ${esc(when(a.next_run))}${esc(plan)}` : auto ? "No days selected" : "Automatic watering is off"} · ${esc(rainNote)}</div>
@@ -318,17 +370,26 @@ class WaterHACard extends HTMLElement {
   }
 
   _click(ev) {
-    const el = ev.composedPath().find((n) => n.dataset && (n.dataset.press || n.dataset.set || n.dataset.edit || n.dataset.close || n.dataset.more || n.dataset.toggle || n.dataset.act));
+    const el = ev.composedPath().find((n) => n.dataset && (n.dataset.press || n.dataset.set || n.dataset.edit || n.dataset.close || n.dataset.more || n.dataset.toggle || n.dataset.act || n.dataset.day || n.dataset.select));
     if (!el || !this._hass) return;
     const d = el.dataset;
     if (d.press) this._hass.callService("button", "press", { entity_id: d.press });
     else if (d.act === "refresh") this._hass.callService("waterha", "refresh_rain", {});
+    else if (d.day) {
+      const cur = this._hass.states[d.tap]?.attributes?.days || [];
+      const next = cur.includes(d.day) ? cur.filter((x) => x !== d.day) : [...cur, d.day];
+      this._hass.callService("waterha", "set_days", { entity_id: d.tap, days: DAY_KEYS.filter((x) => next.includes(x)) });
+    } else if (d.select) {
+      this._hass.callService("select", "select_option", { entity_id: d.select, option: d.v });
+    }
     else if (d.toggle) {
       ev.preventDefault();
       const on = this._hass.states[d.toggle]?.state === "on";
       this._hass.callService("switch", on ? "turn_off" : "turn_on", { entity_id: d.toggle });
     } else if (d.set) {
+      const keep = d.keep ? this._edit : null;
       this._setNumber(d.set, d.v);
+      if (keep) { this._edit = keep; this._render(this._rainState(), this._taps || []); }
     } else if (d.edit) {
       this._edit = this._edit === d.edit ? null : d.edit;
       this._render(this._rainState(), this._taps || []);
@@ -366,6 +427,8 @@ const STYLE = `<style>
     .ctl.line .val, .ctl.line .val.band { padding: 0 5px; --mdc-icon-size: 15px; }
     .ctl.line .slot { padding: 0 5px 0 1px; }
     .ctl.line .slot ha-icon, .ctl.line .u, .ctl.line .unit { display: none; }
+    .ctl.line .badge { margin-left: 1px; padding: 0 2px; font-size: 0.6em; }
+    .ctl.line .slot input { margin: 0 1px; }
   }
   .slot { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 8px 0 4px;
           border: 1px dashed var(--divider-color); border-radius: 16px; color: var(--secondary-text-color);
@@ -373,6 +436,15 @@ const STYLE = `<style>
   .slot.on { border-style: solid; color: var(--primary-text-color); }
   .slot input { margin: 0 2px; cursor: pointer; }
   .slottime { display: inline-flex; align-items: center; gap: 3px; }
+  .slot.open { border-color: var(--primary-color); }
+  .badge { font-size: 0.7em; margin-left: 3px; padding: 0 4px; border-radius: 6px;
+           background: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .days { margin-top: 6px; gap: 4px; flex-wrap: nowrap; }
+  .day { width: 30px; height: 26px; border-radius: 13px; font-size: 0.85em; border: 1px solid var(--divider-color);
+         color: var(--secondary-text-color); }
+  .day.on { background: var(--primary-color); border-color: var(--primary-color); color: var(--text-primary-color, #fff); }
+  .editor .chips + .elabel { display: block; margin-top: 8px; }
+  .stat.today em { font-style: normal; font-size: 0.75em; color: var(--secondary-text-color); }
   .trio .unit { font-size: 0.8em; color: var(--secondary-text-color); }
   .val.band { padding: 0 6px; }
   .val.today { border-color: var(--primary-color); border-width: 2px; font-weight: 500; }

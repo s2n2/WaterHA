@@ -27,7 +27,8 @@ async def test_user_flow_creates_single_hub(hass: HomeAssistant, rain):
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"] == {
-        "forecast_source": "open_meteo", "cool_below": 14.0, "hot_from": 25.0, "water_price": 1.48
+        "forecast_source": "open_meteo", "cool_below": 14.0, "hot_from": 25.0, "water_price": 1.48,
+        "et_cool_below": 3.0, "et_hot_from": 5.0,
     }
     await hass.async_block_till_done()
 

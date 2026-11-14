@@ -40,6 +40,8 @@ from .const import (
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
+    CONF_ET_COOL_BELOW,
+    CONF_ET_HOT_FROM,
     CONF_FLOW_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_HOT_FROM,
@@ -56,6 +58,8 @@ from .const import (
     DAYS,
     DEFAULT_BAND_AMOUNTS,
     DEFAULT_COOL_BELOW,
+    DEFAULT_ET_COOL_BELOW,
+    DEFAULT_ET_HOT_FROM,
     DEFAULT_HOT_FROM,
     DEFAULT_MAX_MINUTES,
     DEFAULT_SLOT_TIMES,
@@ -80,6 +84,7 @@ from .const import (
     RESULT_STOPPED,
     RESULT_STOPPED_EXTERNALLY,
     SIGNAL_UPDATE,
+    SLOT_RULES,
     SLOTS,
     SOURCE_WEATHER,
     STARTUP_RECHECK_SECONDS,
@@ -90,11 +95,15 @@ from .const import (
     STATUS_WATERING,
     SUBENTRY_TAP,
     USAGE_DAYS,
+    WHEN_ALWAYS,
+    WHEN_HOT,
+    WHEN_WARM_HOT,
     amount_key,
 )
 from .rain import (
     RainHour,
     RainSummary,
+    day_et,
     day_max_temp,
     fetch_open_meteo,
     intensity_hours,
@@ -152,6 +161,24 @@ def band_for(temp: float | None, cool_below: float, hot_from: float) -> str:
     if temp >= hot_from:
         return BAND_HOT
     return BAND_WARM
+
+
+BAND_ORDER = [BAND_COOL, BAND_WARM, BAND_HOT]
+
+
+def hotter(*bands: str | None) -> str:
+    """The hottest of the given day types (None ignored; warm if none)."""
+    known = [b for b in bands if b in BAND_ORDER]
+    return max(known, key=BAND_ORDER.index) if known else BAND_WARM
+
+
+def slot_runs_on(when: str | None, band: str) -> bool:
+    """Whether a slot set to run `when` runs on a `band` day."""
+    if when == WHEN_HOT:
+        return band == BAND_HOT
+    if when == WHEN_WARM_HOT:
+        return band in (BAND_WARM, BAND_HOT)
+    return True
 
 
 def band_amount(cfg: dict[str, Any], band: str) -> float:
@@ -534,8 +561,39 @@ class WaterHub:
         tz = dt_util.get_default_time_zone()
         return day_max_temp(self._hours, dt_util.now().date(), tz)
 
-    def band_today(self) -> str:
+    @property
+    def et_cool_below(self) -> float:
+        return float(self.entry.options.get(CONF_ET_COOL_BELOW, DEFAULT_ET_COOL_BELOW))
+
+    @property
+    def et_hot_from(self) -> float:
+        return float(self.entry.options.get(CONF_ET_HOT_FROM, DEFAULT_ET_HOT_FROM))
+
+    def et_today(self) -> float | None:
+        """Today's evapotranspiration (mm) from Open-Meteo; None on backup data."""
+        if self._temp_high_backup is not None:
+            return None
+        return day_et(self._hours, dt_util.now().date(), dt_util.get_default_time_zone())
+
+    def band_by_temp(self) -> str:
         return band_for(self.temp_max_today(), self.cool_below, self.hot_from)
+
+    def band_by_et(self) -> str | None:
+        et = self.et_today()
+        return None if et is None else band_for(et, self.et_cool_below, self.et_hot_from)
+
+    def band_today(self) -> str:
+        """The hotter of the temperature and evapotranspiration day types.
+
+        A windy, dry 21 °C day can dry soil like a hot one; ET catches it.
+        """
+        return hotter(self.band_by_temp(), self.band_by_et())
+
+    def band_reason(self) -> str:
+        by_et = self.band_by_et()
+        if by_et is not None and BAND_ORDER.index(by_et) > BAND_ORDER.index(self.band_by_temp()):
+            return "evapotranspiration"
+        return "temperature"
 
     def amount_today(self, tap_id: str) -> float:
         return band_amount(self.tap(tap_id), self.band_today())
@@ -755,17 +813,33 @@ class WaterHub:
             for n, time_key, on_key, on_default in SLOTS
         ]
 
+    def slot_rule(self, tap_id: str, slot: int) -> tuple[str, float]:
+        """(runs on, share 0..1) of a slot: every day at 100% unless set otherwise."""
+        when_key, share_key = SLOT_RULES[slot]
+        cfg = self.tap(tap_id)
+        share = float(cfg.get(share_key) or 100) / 100
+        return cfg.get(when_key) or WHEN_ALWAYS, max(0.0, min(share, 1.0))
+
     def next_run(self, tap_id: str) -> datetime | None:
         """The soonest run of any slot that is on (None with automatic watering off)."""
         cfg = self.tap(tap_id)
         if not cfg.get(CONF_ENABLED, True):
             return None
         now = dt_util.now()
-        runs = [
-            moment
-            for _n, start, on in self.slots(tap_id)
-            if on and (moment := next_run_after(now, start, cfg.get(CONF_DAYS, []))) is not None
-        ]
+        band = self.band_today()
+        runs = []
+        for n, start, on in self.slots(tap_id):
+            if not on:
+                continue
+            when, _share = self.slot_rule(tap_id, n)
+            moment = next_run_after(now, start, cfg.get(CONF_DAYS, []))
+            if moment is None:
+                continue
+            # A hot-day-only slot counts only when it is today and today qualifies:
+            # later days' type is not known yet.
+            if when != WHEN_ALWAYS and (moment.date() != now.date() or not slot_runs_on(when, band)):
+                continue
+            runs.append(moment)
         return min(runs) if runs else None
 
     def status(self, tap_id: str) -> str:
@@ -798,8 +872,14 @@ class WaterHub:
         for n, start, on in self.slots(tap_id):
             if not on or start is None or (local.hour, local.minute) != (start.hour, start.minute):
                 continue
-            if self.tap_state(tap_id).get(_scheduled_key(n)) != today:
-                return n
+            if self.tap_state(tap_id).get(_scheduled_key(n)) == today:
+                continue
+            when, _share = self.slot_rule(tap_id, n)
+            if not slot_runs_on(when, self.band_today()):
+                # Not that kind of day: nothing to do (and nothing to log).
+                self.tap_state(tap_id)[_scheduled_key(n)] = today
+                continue
+            return n
         return None
 
     async def _scheduled_run(self, tap_id: str, local: datetime, slot: int = 1) -> None:
@@ -829,7 +909,8 @@ class WaterHub:
             return
         band = self.band_today()
         factor = self.rain_factor(tap_id)
-        amount = round(band_amount(self.tap(tap_id), band) * factor, 1)
+        _when, share = self.slot_rule(tap_id, slot)
+        amount = round(band_amount(self.tap(tap_id), band) * share * factor, 1)
         state.update(
             last_check_temp=self.temp_max_today(), last_check_band=band, last_rain_factor=round(factor, 2)
         )
@@ -1096,6 +1177,19 @@ class WaterHub:
             "amount_today": band_amount(cfg, band),
             "rain_factor": round(self.rain_factor(tap_id), 2),
             "scheduled_amount": self.scheduled_amount(tap_id),
+            "slot_plan": [
+                {
+                    "slot": n,
+                    "on": on,
+                    "when": self.slot_rule(tap_id, n)[0],
+                    "share": round(self.slot_rule(tap_id, n)[1] * 100),
+                    "runs_today": on and slot_runs_on(self.slot_rule(tap_id, n)[0], band),
+                    "amount": round(
+                        band_amount(cfg, band) * self.slot_rule(tap_id, n)[1] * self.rain_factor(tap_id), 1
+                    ),
+                }
+                for n, _start, on in self.slots(tap_id)
+            ],
             "one_at_a_time": bool(cfg.get(CONF_SEQUENTIAL, True)),
             "queue_position": next(
                 (i + 1 for i, item in enumerate(self.queue) if item[0] == tap_id), None

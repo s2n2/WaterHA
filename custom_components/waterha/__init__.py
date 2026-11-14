@@ -17,10 +17,12 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CONF_BACKUP_WEATHER,
+    CONF_DAYS,
     CONF_FLOW_SENSOR,
     CONF_MODE,
     CONF_PAST_RAIN_SENSOR,
     CONF_TAP_ENTITY,
+    DAYS,
     DOMAIN,
     MODE_LITRES,
     MODE_MINUTES,
@@ -45,6 +47,12 @@ WATER_SCHEMA = vol.Schema(
     }
 )
 STOP_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTITY_ID): cv.entity_ids})
+DAYS_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        vol.Required("days"): vol.All(cv.ensure_list, [vol.In(DAYS)]),
+    }
+)
 
 
 def _structure(entry: ConfigEntry) -> tuple[Any, ...]:
@@ -105,6 +113,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             await entry.runtime_data.async_stop_all()
 
+    async def set_days(call: ServiceCall) -> None:
+        days = [d for d in DAYS if d in call.data["days"]]
+        for hub, tap_id in _targets(call):
+            await hub.async_set_option(tap_id, CONF_DAYS, days)
+
     async def refresh_rain(call: ServiceCall) -> None:
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             await entry.runtime_data.async_refresh_rain()
@@ -112,6 +125,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(DOMAIN, "water_now", water_now, schema=WATER_SCHEMA)
     hass.services.async_register(DOMAIN, "stop", stop, schema=STOP_SCHEMA)
     hass.services.async_register(DOMAIN, "refresh_rain", refresh_rain)
+    hass.services.async_register(DOMAIN, "set_days", set_days, schema=DAYS_SCHEMA)
     return True
 
 

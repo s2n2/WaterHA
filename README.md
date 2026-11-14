@@ -5,7 +5,8 @@ each waters on a **cool, warm or hot day** (minutes, or litres from the tap's fl
 when, and how much rain makes a run unnecessary. WaterHA pulls hourly rain for the **past
 24 h and the next 24 h** and today's forecast high, then:
 
-- picks the cool, warm or hot amount from today's forecast high,
+- picks the cool, warm or hot amount from today's forecast high **and evapotranspiration**
+  (so a dry, windy mild day counts as hot),
 - **shortens** a scheduled run in proportion to rain below the tap's threshold
   (2.5 mm against a 5 mm threshold waters 50%),
 - **skips** it when rain reaches the threshold,
@@ -30,6 +31,7 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Cool day below | Today's forecast high below this is a cool day. Default 16 °C. |
 | Hot day from | Today's forecast high at or above this is a hot day. Default 23 °C. In between is warm. |
 | Water price | What you pay per 1000 L, for the cost card. Default 1.48. |
+| Cool day: ET below / Hot day: ET from | Evapotranspiration (ET₀, mm today) splits. Defaults 3 and 5 mm. |
 | Backup forecast | Weather entities used when Open-Meteo is unreachable: the first with an hourly forecast gives the next 24 h, and its daily forecast today's high. Empty = every weather entity with an hourly forecast. |
 | Backup past rain | A rain-rate sensor (mm/h) whose recorded history gives the past 24 h when Open-Meteo is unreachable, e.g. `sensor.pirateweather_precip_intensity`. Empty = the first current rain-rate sensor. |
 
@@ -41,7 +43,9 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Water by | Minutes, or litres (needs a flow-rate sensor) |
 | Cool / warm / hot day amount | Minutes open, or litres to deliver, for each day type |
 | Flow-rate sensor | e.g. `sensor.tap_lawn_volume_flow_rate`; records litres used even in minutes mode |
-| Slot 1 / Slot 2 | Two daily times, each switched on or off (default 06:00 on, 19:00 off). Each slot that runs gives the full amount, less for rain. |
+| Slot 1 / Slot 2 | Two daily times, each switched on or off (default 06:00 on, 19:00 off). |
+| Slot runs on | Every day, warm and hot days, or hot days only, e.g. an afternoon top-up only when it is hot or windy. |
+| Slot amount | Share of the day-type amount the slot gives (default 100%; e.g. 30% for a top-up), less for rain. |
 | Days | Which days the slots run |
 | Rain threshold | Skip when past 24 h + next 24 h rain ≥ this (mm); less rain shortens the run in proportion. 0 = ignore rain |
 | Maximum run time | Safety limit; the tap closes after this whatever happens |
@@ -52,7 +56,9 @@ Change a tap later with its ⋮ → **Reconfigure**, or from its entities on any
 ### How a scheduled run is worked out
 
 ```
-amount  = the tap's cool / warm / hot amount for today's forecast high
+day     = the hotter of: forecast high vs the °C splits, and evapotranspiration vs the mm splits
+slot    = runs only if its 'runs on' matches the day
+amount  = the tap's cool / warm / hot amount for the day × the slot's share
 factor  = 1 − (rain past 24 h + next 24 h) ÷ rain threshold     (0 … 1)
 run     = amount × factor        → skipped when factor is 0
 ```
@@ -82,10 +88,12 @@ title: Garden
 ```
 
 It shows the hourly rain for the 48 h window (past in grey, forecast in blue, stronger for
-higher probability), the totals and today's day type (tap it to change the splits). Each tap
+higher probability), the totals and today's day type with evapotranspiration (tap it to change
+the °C and ET splits). Each tap
 has Water now/Stop, Auto, One at a time, its cool/warm/hot amounts (today's is outlined; tap
 one for one-tap presets or to type any value), rain threshold, its two slots (tick to turn a
-slot on or off, tap the time to change it), and what its next run will give after rain.
+slot on or off; tap the time for its time, which days it runs on and how much), a row of
+M T W T F S S chips to pick the days, and what its next run will give after rain.
 
 ### History card
 
@@ -124,6 +132,7 @@ dashboard as a water source.
 - `waterha.water_now`: `entity_id` (the tap switch/valve or any of its WaterHA entities),
   optional `amount`, `mode`. Without an amount, today's day-type amount. Ignores rain.
 - `waterha.stop`: the given taps, or all.
+- `waterha.set_days`: `entity_id`, `days` (e.g. `[mon, wed, fri]`).
 - `waterha.refresh_rain`.
 
 ## Safety
@@ -138,9 +147,9 @@ dashboard as a water source.
 - A run in progress when Home Assistant stops or the integration reloads is closed and
   recorded as interrupted. Runs are not resumed, and missed schedules are not caught up.
 
-## Rain and temperature data
+## Rain, temperature and evapotranspiration data
 
-Open-Meteo hourly precipitation and temperature for the home coordinates in Home
+Open-Meteo hourly precipitation, temperature and FAO evapotranspiration for the home coordinates in Home
 Assistant, refreshed every 30 minutes and before a scheduled run if older than that.
 
 When Open-Meteo cannot be reached, WaterHA uses Home Assistant's own data instead (the

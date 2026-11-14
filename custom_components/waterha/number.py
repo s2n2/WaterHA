@@ -17,6 +17,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from .const import (
     BANDS,
     CONF_COOL_BELOW,
+    CONF_ET_COOL_BELOW,
+    CONF_ET_HOT_FROM,
     CONF_HOT_FROM,
     CONF_MAX_MINUTES,
     CONF_MODE,
@@ -24,6 +26,7 @@ from .const import (
     CONF_WATER_PRICE,
     DEFAULT_MAX_MINUTES,
     MODE_LITRES,
+    SLOT_RULES,
     amount_key,
 )
 from .entity import TapEntity, WaterEntity, add_entities
@@ -38,11 +41,18 @@ async def async_setup_entry(
         hass,
         entry,
         async_add_entities,
-        [SplitNumber(hub, CONF_COOL_BELOW), SplitNumber(hub, CONF_HOT_FROM), PriceNumber(hub)],
+        [
+            SplitNumber(hub, CONF_COOL_BELOW),
+            SplitNumber(hub, CONF_HOT_FROM),
+            EtSplitNumber(hub, CONF_ET_COOL_BELOW),
+            EtSplitNumber(hub, CONF_ET_HOT_FROM),
+            PriceNumber(hub),
+        ],
         lambda hub, tap_id: [
             *(AmountNumber(hub, tap_id, band) for band in BANDS),
             TapNumber(hub, tap_id, CONF_RAIN_THRESHOLD),
             TapNumber(hub, tap_id, CONF_MAX_MINUTES),
+            *(SlotShareNumber(hub, tap_id, n) for n in SLOT_RULES),
         ],
     )
 
@@ -147,3 +157,52 @@ class PriceNumber(WaterEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.hub.async_set_hub_option(CONF_WATER_PRICE, round(float(value), 4))
+
+
+class EtSplitNumber(WaterEntity, NumberEntity):
+    """Evapotranspiration (mm today) where cool ends and hot begins, for every tap."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "mm"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 15
+    _attr_native_step = 0.5
+
+    def __init__(self, hub: WaterHub, key: str) -> None:
+        super().__init__(hub, key)
+        self._key = key
+
+    @property
+    def native_value(self) -> float:
+        return self.hub.et_cool_below if self._key == CONF_ET_COOL_BELOW else self.hub.et_hot_from
+
+    async def async_set_native_value(self, value: float) -> None:
+        value = float(value)
+        if self._key == CONF_ET_COOL_BELOW and value >= self.hub.et_hot_from:
+            await self.hub.async_set_hub_option(CONF_ET_HOT_FROM, value + 0.5)
+        if self._key == CONF_ET_HOT_FROM and value <= self.hub.et_cool_below:
+            await self.hub.async_set_hub_option(CONF_ET_COOL_BELOW, max(0.0, value - 0.5))
+        await self.hub.async_set_hub_option(self._key, value)
+
+
+class SlotShareNumber(TapEntity, NumberEntity):
+    """What share of the day-type amount a slot gives (e.g. 30% for a top-up)."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "%"
+    _attr_native_min_value = 5
+    _attr_native_max_value = 100
+    _attr_native_step = 5
+
+    def __init__(self, hub: WaterHub, tap_id: str, slot: int) -> None:
+        self._key = SLOT_RULES[slot][1]
+        super().__init__(hub, tap_id, self._key)
+        self._attr_translation_key = "slot_share"
+        self._attr_translation_placeholders = {"slot": str(slot)}
+
+    @property
+    def native_value(self) -> float:
+        return float(self.cfg.get(self._key) or 100)
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.hub.async_set_option(self.tap_id, self._key, int(value))

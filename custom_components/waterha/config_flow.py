@@ -23,6 +23,8 @@ from .const import (
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
+    CONF_ET_COOL_BELOW,
+    CONF_ET_HOT_FROM,
     CONF_FLOW_SENSOR,
     CONF_FORECAST_SOURCE,
     CONF_HOT_FROM,
@@ -42,6 +44,8 @@ from .const import (
     DAYS,
     DEFAULT_BAND_AMOUNTS,
     DEFAULT_COOL_BELOW,
+    DEFAULT_ET_COOL_BELOW,
+    DEFAULT_ET_HOT_FROM,
     DEFAULT_HOT_FROM,
     DEFAULT_MAX_MINUTES,
     DEFAULT_RAIN_THRESHOLD,
@@ -51,9 +55,12 @@ from .const import (
     DOMAIN,
     MODE_LITRES,
     MODE_MINUTES,
+    SLOT_RULES,
+    SLOT_WHEN,
     SOURCE_OPEN_METEO,
     SOURCE_WEATHER,
     SUBENTRY_TAP,
+    WHEN_ALWAYS,
     amount_key,
 )
 
@@ -61,6 +68,19 @@ TEMP = selector.NumberSelector(
     selector.NumberSelectorConfig(
         min=-10, max=50, step=0.5, unit_of_measurement="°C", mode=selector.NumberSelectorMode.BOX
     )
+)
+ET = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=0, max=15, step=0.5, unit_of_measurement="mm", mode=selector.NumberSelectorMode.BOX
+    )
+)
+SHARE = selector.NumberSelector(
+    selector.NumberSelectorConfig(
+        min=5, max=100, step=5, unit_of_measurement="%", mode=selector.NumberSelectorMode.BOX
+    )
+)
+WHEN = selector.SelectSelector(
+    selector.SelectSelectorConfig(options=list(SLOT_WHEN), translation_key="slot_when_option")
 )
 AMOUNT = selector.NumberSelector(
     selector.NumberSelectorConfig(min=0, max=2000, step=1, mode=selector.NumberSelectorMode.BOX)
@@ -87,6 +107,10 @@ def _hub_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_COOL_BELOW, default=defaults.get(CONF_COOL_BELOW, DEFAULT_COOL_BELOW)
             ): TEMP,
             vol.Required(CONF_HOT_FROM, default=defaults.get(CONF_HOT_FROM, DEFAULT_HOT_FROM)): TEMP,
+            vol.Required(
+                CONF_ET_COOL_BELOW, default=defaults.get(CONF_ET_COOL_BELOW, DEFAULT_ET_COOL_BELOW)
+            ): ET,
+            vol.Required(CONF_ET_HOT_FROM, default=defaults.get(CONF_ET_HOT_FROM, DEFAULT_ET_HOT_FROM)): ET,
             vol.Required(
                 CONF_WATER_PRICE, default=defaults.get(CONF_WATER_PRICE, DEFAULT_WATER_PRICE)
             ): selector.NumberSelector(
@@ -116,6 +140,10 @@ def _hub_errors(data: dict[str, Any]) -> dict[str, str]:
         data.get(CONF_HOT_FROM, DEFAULT_HOT_FROM)
     ):
         return {CONF_HOT_FROM: "splits_order"}
+    if float(data.get(CONF_ET_COOL_BELOW, DEFAULT_ET_COOL_BELOW)) >= float(
+        data.get(CONF_ET_HOT_FROM, DEFAULT_ET_HOT_FROM)
+    ):
+        return {CONF_ET_HOT_FROM: "splits_order"}
     return {}
 
 
@@ -123,6 +151,9 @@ def _hub_options(data: dict[str, Any]) -> dict[str, Any]:
     data = dict(data)
     data[CONF_COOL_BELOW] = float(data[CONF_COOL_BELOW])
     data[CONF_HOT_FROM] = float(data[CONF_HOT_FROM])
+    for key in (CONF_ET_COOL_BELOW, CONF_ET_HOT_FROM):
+        if key in data:
+            data[key] = float(data[key])
     if CONF_WATER_PRICE in data:
         data[CONF_WATER_PRICE] = float(data[CONF_WATER_PRICE])
     return data
@@ -239,6 +270,11 @@ def _tap_schema(d: dict[str, Any]) -> vol.Schema:
                     )
                 )
             ),
+            **{
+                vol.Required(key, default=d.get(key, default)): sel
+                for when_key, share_key in SLOT_RULES.values()
+                for key, default, sel in ((when_key, WHEN_ALWAYS, WHEN), (share_key, 100, SHARE))
+            },
             vol.Required(CONF_SEQUENTIAL, default=d.get(CONF_SEQUENTIAL, True)): bool,
             vol.Required(CONF_ENABLED, default=d.get(CONF_ENABLED, True)): bool,
         }
@@ -264,6 +300,9 @@ class TapSubentryFlow(ConfigSubentryFlow):
         data.pop(CONF_AMOUNT, None)  # 0.1.x single amount, replaced by the three below
         for band in BANDS:
             data[amount_key(band)] = float(data[amount_key(band)])
+        for _when_key, share_key in SLOT_RULES.values():
+            if share_key in data:
+                data[share_key] = int(data[share_key])
         data[CONF_RAIN_THRESHOLD] = float(data[CONF_RAIN_THRESHOLD])
         data[CONF_MAX_MINUTES] = int(data[CONF_MAX_MINUTES])
         data[CONF_DAYS] = [d for d in DAYS if d in data[CONF_DAYS]]

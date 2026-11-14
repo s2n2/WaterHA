@@ -26,3 +26,24 @@ stop:
         entity:
           multiple: true
 refresh_rain:
+set_days:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          multiple: true
+    days:
+      required: true
+      selector:
+        select:
+          multiple: true
+          options:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+            - sat
+            - sun
+          translation_key: days

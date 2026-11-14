@@ -23,6 +23,7 @@ class RainHour:
     mm: float
     probability: float | None = None
     temp: float | None = None  # air temperature (°C) at `end`, when the source gives it
+    et: float | None = None  # reference evapotranspiration in the hour (mm)
 
     def as_dict(self) -> dict[str, Any]:
         return {"t": self.end.isoformat(), "mm": round(self.mm, 2), "p": self.probability}
@@ -66,6 +67,12 @@ def day_max_temp(hours: list[RainHour], day: Any, tz: Any) -> float | None:
     return round(max(temps), 1) if temps else None
 
 
+def day_et(hours: list[RainHour], day: Any, tz: Any) -> float | None:
+    """Evapotranspiration over local calendar `day` (None if the source has none)."""
+    values = [h.et for h in hours if h.et is not None and h.end.astimezone(tz).date() == day]
+    return round(sum(values), 1) if values else None
+
+
 def parse_open_meteo(payload: dict[str, Any]) -> list[RainHour]:
     """Turn an Open-Meteo hourly payload (timeformat=unixtime) into RainHours."""
     hourly = payload.get("hourly") or {}
@@ -73,6 +80,7 @@ def parse_open_meteo(payload: dict[str, Any]) -> list[RainHour]:
     rain = hourly.get("precipitation") or []
     prob = hourly.get("precipitation_probability") or []
     temps = hourly.get("temperature_2m") or []
+    ets = hourly.get("et0_fao_evapotranspiration") or []
     hours: list[RainHour] = []
     for index, stamp in enumerate(times):
         mm = _num(rain[index]) if index < len(rain) else None
@@ -80,7 +88,8 @@ def parse_open_meteo(payload: dict[str, Any]) -> list[RainHour]:
             continue
         p = _num(prob[index]) if index < len(prob) else None
         t = _temp(temps[index]) if index < len(temps) else None
-        hours.append(RainHour(datetime.fromtimestamp(int(stamp), timezone.utc), mm, p, t))
+        e = _num(ets[index]) if index < len(ets) else None
+        hours.append(RainHour(datetime.fromtimestamp(int(stamp), timezone.utc), mm, p, t, e))
     return hours
 
 
@@ -185,7 +194,7 @@ async def fetch_open_meteo(
     params = {
         "latitude": f"{latitude:.4f}",
         "longitude": f"{longitude:.4f}",
-        "hourly": "precipitation,precipitation_probability,temperature_2m",
+        "hourly": "precipitation,precipitation_probability,temperature_2m,et0_fao_evapotranspiration",
         "past_days": "2",
         "forecast_days": "3",
         "timezone": "UTC",

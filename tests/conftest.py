@@ -47,7 +47,9 @@ def tap_data(**over: Any) -> dict[str, Any]:
     return data
 
 
-def open_meteo_payload(now: datetime, past_mm: float, next_mm: float, temp: float = 20.0) -> dict[str, Any]:
+def open_meteo_payload(
+    now: datetime, past_mm: float, next_mm: float, temp: float = 20.0, et: float | None = None
+) -> dict[str, Any]:
     """48 h either side of now; rain spread evenly over the 24 h each side; a flat temperature."""
     base = now.replace(minute=0, second=0, microsecond=0)
     times, rain = [], []
@@ -66,6 +68,8 @@ def open_meteo_payload(now: datetime, past_mm: float, next_mm: float, temp: floa
             "precipitation": rain,
             "precipitation_probability": [50] * len(times),
             "temperature_2m": [temp] * len(times),
+            # ET spread evenly: `et` mm per 24 h, so any local day sums to `et`.
+            "et0_fao_evapotranspiration": [None if et is None else et / 24] * len(times),
         }
     }
 
@@ -98,11 +102,13 @@ class Taps:
 def rain(aioclient_mock):
     """Call rain(past, next, now, temp=) to set what Open-Meteo returns."""
 
-    def _set(past_mm: float, next_mm: float, now: datetime | None = None, temp: float = 20.0) -> None:
+    def _set(
+        past_mm: float, next_mm: float, now: datetime | None = None, temp: float = 20.0, et: float | None = None
+    ) -> None:
         aioclient_mock.clear_requests()
         aioclient_mock.get(
             OPEN_METEO_URL,
-            json=open_meteo_payload(now or datetime.now(timezone.utc), past_mm, next_mm, temp),
+            json=open_meteo_payload(now or datetime.now(timezone.utc), past_mm, next_mm, temp, et),
         )
 
     return _set

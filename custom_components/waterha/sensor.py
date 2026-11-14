@@ -53,6 +53,10 @@ TAP_ROLES = {
     "start_time_2": ("time", "start_time_2"),
     "slot_1": ("switch", "slot_1"),
     "slot_2": ("switch", "slot_2"),
+    "slot_1_when": ("select", "slot_1_when"),
+    "slot_2_when": ("select", "slot_2_when"),
+    "slot_1_share": ("number", "slot_1_share"),
+    "slot_2_share": ("number", "slot_2_share"),
     "water_now": ("button", "water_now"),
     "stop": ("button", "stop"),
 }
@@ -71,6 +75,7 @@ async def async_setup_entry(
             RainSensor(hub, "rain_next_24h"),
             RainWindowSensor(hub),
             TempTodaySensor(hub),
+            EtTodaySensor(hub),
             DayTypeSensor(hub),
             WateringLogSensor(hub),
             WaterUsedSensor(hub),
@@ -128,7 +133,13 @@ class RainWindowSensor(RainSensor):
         hub_id = self.hub.entry.entry_id
         return {
             "day_type": self.hub.band_today(),
+            "day_type_by": self.hub.band_reason(),
             "temp_max_today": self.hub.temp_max_today(),
+            "et_today": self.hub.et_today(),
+            "et_cool_below": self.hub.et_cool_below,
+            "et_hot_from": self.hub.et_hot_from,
+            "et_cool_below_entity": registry.async_get_entity_id("number", DOMAIN, f"{hub_id}_et_cool_below"),
+            "et_hot_from_entity": registry.async_get_entity_id("number", DOMAIN, f"{hub_id}_et_hot_from"),
             "cool_below": self.hub.cool_below,
             "hot_from": self.hub.hot_from,
             "cool_below_entity": registry.async_get_entity_id("number", DOMAIN, f"{hub_id}_cool_below"),
@@ -159,6 +170,21 @@ class TempTodaySensor(WaterEntity, SensorEntity):
         return self.hub.temp_max_today()
 
 
+class EtTodaySensor(WaterEntity, SensorEntity):
+    """Today's evapotranspiration: how much water the day will pull out (heat, sun, wind, dry air)."""
+
+    _attr_native_unit_of_measurement = "mm"
+    _attr_suggested_display_precision = 1
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "et_today")
+
+    @property
+    def native_value(self) -> float | None:
+        return self.hub.et_today()
+
+
 class DayTypeSensor(WaterEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(BANDS)
@@ -173,9 +199,13 @@ class DayTypeSensor(WaterEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
+            "by": self.hub.band_reason(),
             "temp_max_today": self.hub.temp_max_today(),
             "cool_below": self.hub.cool_below,
             "hot_from": self.hub.hot_from,
+            "et_today": self.hub.et_today(),
+            "et_cool_below": self.hub.et_cool_below,
+            "et_hot_from": self.hub.et_hot_from,
         }
 
 
@@ -257,7 +287,7 @@ class TapStatusSensor(TapEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [STATUS_IDLE, STATUS_WATERING, STATUS_QUEUED, STATUS_DISABLED, STATUS_RAIN_HOLD]
     _unrecorded_attributes = frozenset(
-        {"run", "days", "tap_entity", "rain_window_mm", "amounts", "queue_position", "slots"}
+        {"run", "days", "tap_entity", "rain_window_mm", "amounts", "queue_position", "slots", "slot_plan"}
     )
 
     def __init__(self, hub: WaterHub, tap_id: str) -> None:

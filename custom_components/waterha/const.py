@@ -5,11 +5,12 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 PLATFORMS = [
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
     Platform.TIME,
@@ -25,8 +26,18 @@ CONF_HOT_FROM = "hot_from"
 # Hub options that change no entities, so editing them never reloads.
 CONF_BACKUP_WEATHER = "backup_weather"
 CONF_PAST_RAIN_SENSOR = "past_rain_sensor"
+CONF_ET_COOL_BELOW = "et_cool_below"  # mm of evapotranspiration today
+CONF_ET_HOT_FROM = "et_hot_from"
 CONF_WATER_PRICE = "water_price"  # per 1000 L (per m³), in HA's currency
-SOFT_OPTIONS = {CONF_COOL_BELOW, CONF_HOT_FROM, CONF_BACKUP_WEATHER, CONF_PAST_RAIN_SENSOR, CONF_WATER_PRICE}
+SOFT_OPTIONS = {
+    CONF_COOL_BELOW,
+    CONF_HOT_FROM,
+    CONF_ET_COOL_BELOW,
+    CONF_ET_HOT_FROM,
+    CONF_BACKUP_WEATHER,
+    CONF_PAST_RAIN_SENSOR,
+    CONF_WATER_PRICE,
+}
 SOURCE_OPEN_METEO = "open_meteo"
 SOURCE_WEATHER = "weather_entity"
 
@@ -61,6 +72,11 @@ BAND_HOT = "hot"
 BANDS = [BAND_COOL, BAND_WARM, BAND_HOT]
 DEFAULT_COOL_BELOW = 16.0
 DEFAULT_HOT_FROM = 23.0
+# Evapotranspiration (ET0, mm/day: water lost to heat, sun, wind and dry air).
+# The day type is the hotter of the temperature rule and this one, so a
+# windy, dry mild day counts as hot.
+DEFAULT_ET_COOL_BELOW = 3.0
+DEFAULT_ET_HOT_FROM = 5.0
 DEFAULT_BAND_AMOUNTS = {
     "minutes": {BAND_COOL: 5.0, BAND_WARM: 10.0, BAND_HOT: 15.0},
     "litres": {BAND_COOL: 20.0, BAND_WARM: 40.0, BAND_HOT: 60.0},
@@ -86,6 +102,12 @@ DEFAULT_START_TIME_2 = "19:00:00"
 # Two daily slots: (number, time key, on/off key, on by default).
 SLOTS = [(1, CONF_START_TIME, CONF_SLOT_1, True), (2, CONF_START_TIME_2, CONF_SLOT_2, False)]
 DEFAULT_SLOT_TIMES = {1: DEFAULT_START_TIME, 2: DEFAULT_START_TIME_2}
+# Per slot: on which day types it runs, and what share of the day-type amount it gives.
+WHEN_ALWAYS = "always"
+WHEN_WARM_HOT = "warm_hot"
+WHEN_HOT = "hot"
+SLOT_WHEN = [WHEN_ALWAYS, WHEN_WARM_HOT, WHEN_HOT]
+SLOT_RULES = {1: ("slot_1_when", "slot_1_share"), 2: ("slot_2_when", "slot_2_share")}
 DEFAULT_RAIN_THRESHOLD = 5.0
 DEFAULT_MAX_MINUTES = 45
 

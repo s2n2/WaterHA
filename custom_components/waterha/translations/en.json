@@ -11,7 +11,9 @@
           "hot_from": "Hot day from",
           "backup_weather": "Backup forecast (weather entities)",
           "past_rain_sensor": "Backup past rain (rain-rate sensor)",
-          "water_price": "Water price"
+          "water_price": "Water price",
+          "et_cool_below": "Cool day: evapotranspiration below",
+          "et_hot_from": "Hot day: evapotranspiration from"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
@@ -19,7 +21,9 @@
           "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
           "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
           "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
-          "water_price": "What you pay per 1000 L (per m³), for the cost card."
+          "water_price": "What you pay per 1000 L (per m³), for the cost card.",
+          "et_cool_below": "Evapotranspiration (ET₀) is how much water today's heat, sun, wind and dry air pull out, in mm. The day type is the hotter of the temperature and ET₀ rules, so a dry, windy mild day counts as hot. Default 3 mm.",
+          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm."
         }
       }
     },
@@ -42,7 +46,9 @@
           "hot_from": "Hot day from",
           "backup_weather": "Backup forecast (weather entities)",
           "past_rain_sensor": "Backup past rain (rain-rate sensor)",
-          "water_price": "Water price"
+          "water_price": "Water price",
+          "et_cool_below": "Cool day: evapotranspiration below",
+          "et_hot_from": "Hot day: evapotranspiration from"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
@@ -50,7 +56,9 @@
           "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
           "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
           "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
-          "water_price": "What you pay per 1000 L (per m³), for the cost card."
+          "water_price": "What you pay per 1000 L (per m³), for the cost card.",
+          "et_cool_below": "Evapotranspiration (ET₀) is how much water today's heat, sun, wind and dry air pull out, in mm. The day type is the hotter of the temperature and ET₀ rules, so a dry, windy mild day counts as hot. Default 3 mm.",
+          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm."
         }
       }
     },
@@ -78,8 +86,12 @@
             "flow_sensor": "Flow-rate sensor",
             "slot_1": "Slot 1 on",
             "start_time": "Slot 1 time",
+            "slot_1_when": "Slot 1 runs on",
+            "slot_1_share": "Slot 1 amount",
             "slot_2": "Slot 2 on",
             "start_time_2": "Slot 2 time",
+            "slot_2_when": "Slot 2 runs on",
+            "slot_2_share": "Slot 2 amount",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
@@ -93,7 +105,8 @@
             "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
             "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
             "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another.",
-            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain)."
+            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain).",
+            "slot_2_share": "Share of the day-type amount this slot gives, e.g. a 30% afternoon top-up on hot days only."
           }
         },
         "reconfigure": {
@@ -108,8 +121,12 @@
             "flow_sensor": "Flow-rate sensor",
             "slot_1": "Slot 1 on",
             "start_time": "Slot 1 time",
+            "slot_1_when": "Slot 1 runs on",
+            "slot_1_share": "Slot 1 amount",
             "slot_2": "Slot 2 on",
             "start_time_2": "Slot 2 time",
+            "slot_2_when": "Slot 2 runs on",
+            "slot_2_share": "Slot 2 amount",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
@@ -123,7 +140,8 @@
             "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
             "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
             "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another.",
-            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain)."
+            "slot_2": "Two daily slots, e.g. morning and evening; turn on either or both. Each slot that runs gives the full day-type amount (less for rain).",
+            "slot_2_share": "Share of the day-type amount this slot gives, e.g. a 30% afternoon top-up on hot days only."
           }
         }
       },
@@ -159,6 +177,13 @@
         "fri": "Friday",
         "sat": "Saturday",
         "sun": "Sunday"
+      }
+    },
+    "slot_when_option": {
+      "options": {
+        "always": "Every day",
+        "warm_hot": "Warm and hot days",
+        "hot": "Hot days only"
       }
     }
   },
@@ -212,6 +237,9 @@
       },
       "water_cost_today": {
         "name": "Water cost today"
+      },
+      "et_today": {
+        "name": "Evapotranspiration today"
       }
     },
     "switch": {
@@ -252,6 +280,15 @@
       },
       "water_price": {
         "name": "Water price"
+      },
+      "slot_share": {
+        "name": "Slot {slot} amount"
+      },
+      "et_cool_below": {
+        "name": "Cool day ET below"
+      },
+      "et_hot_from": {
+        "name": "Hot day ET from"
       }
     },
     "time": {
@@ -274,6 +311,16 @@
       },
       "refresh_rain": {
         "name": "Refresh rain"
+      }
+    },
+    "select": {
+      "slot_when": {
+        "name": "Slot {slot} runs on",
+        "state": {
+          "always": "Every day",
+          "warm_hot": "Warm and hot days",
+          "hot": "Hot days only"
+        }
       }
     }
   },
@@ -309,6 +356,20 @@
     "refresh_rain": {
       "name": "Refresh rain",
       "description": "Fetch rain data now."
+    },
+    "set_days": {
+      "name": "Set days",
+      "description": "Choose which days a WaterHA tap's slots run.",
+      "fields": {
+        "entity_id": {
+          "name": "Tap",
+          "description": "The tap's switch or valve, or any of its WaterHA entities."
+        },
+        "days": {
+          "name": "Days",
+          "description": "The days to run; none stops scheduled runs."
+        }
+      }
     }
   }
 }
