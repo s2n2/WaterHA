@@ -6,7 +6,13 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.1.1";
+const VERSION = "0.2.0";
+
+const BAND = {
+  cool: ["Cool", "mdi:snowflake"],
+  warm: ["Warm", "mdi:weather-partly-cloudy"],
+  hot: ["Hot", "mdi:white-balance-sunny"],
+};
 
 // One-tap choices when editing a value; any other value can be typed.
 const PRESETS = {
@@ -87,7 +93,12 @@ class WaterHACard extends HTMLElement {
     const rain = this._rainState();
     const taps = rain?.attributes?.taps || [];
     const ids = [rain?.entity_id];
-    for (const t of taps) ids.push(t.status, t.next_run, t.automatic, t.amount, t.rain_threshold, t.start_time);
+    const a0 = rain?.attributes || {};
+    ids.push(a0.cool_below_entity, a0.hot_from_entity);
+    for (const t of taps) {
+      ids.push(t.status, t.next_run, t.automatic, t.one_at_a_time, t.amount_cool, t.amount_warm,
+        t.amount_hot, t.rain_threshold, t.start_time);
+    }
     const sig = ids.map((id) => {
       const s = id && hass.states[id];
       return s ? `${s.state}|${s.last_updated}` : "";
@@ -127,7 +138,7 @@ class WaterHACard extends HTMLElement {
     this._render(this._rainState(), this._taps || []);
   }
 
-  _editor(entityId, unit) {
+  _editor(entityId, unit, label) {
     const s = this._hass.states[entityId];
     if (!s) return "";
     const cur = parseFloat(s.state);
@@ -137,11 +148,24 @@ class WaterHACard extends HTMLElement {
       .map((v) => `<button class="chip${v === cur ? " on" : ""}" data-set="${esc(entityId)}" data-v="${v}">${unit === "mm" && v === 0 ? "Off" : v}</button>`)
       .join("");
     return `<div class="editor">
-      <span class="elabel">${unit === "mm" ? "Skip when rain (past + next 24 h) reaches" : "Water for"}</span>
+      <span class="elabel">${esc(label || (unit === "mm" ? "Skip when rain (past + next 24 h) reaches; less rain shortens runs" : "Water for"))}</span>
       <div class="chips">${chips}
         <span class="custom"><input type="number" inputmode="decimal" data-input="${esc(entityId)}"
           min="${a.min ?? 0}" max="${a.max ?? 9999}" step="${a.step ?? 1}" placeholder="${esc(fmt(s.state))}"
           aria-label="Other value"/> ${unit}</span>
+        <button class="chip done" data-close="1" aria-label="Close">✕</button>
+      </div>
+    </div>`;
+  }
+
+  _splitsEditor(a) {
+    const input = (id, v) => `<input type="number" inputmode="decimal" step="0.5" data-input="${esc(id)}"
+      placeholder="${esc(fmt(v))}" aria-label="°C"/>`;
+    return `<div class="editor">
+      <span class="elabel">Day type from today's forecast high (all taps)</span>
+      <div class="chips">
+        <span class="custom"><ha-icon icon="mdi:snowflake"></ha-icon> cool below ${input(a.cool_below_entity, a.cool_below)} °C</span>
+        <span class="custom"><ha-icon icon="mdi:white-balance-sunny"></ha-icon> hot from ${input(a.hot_from_entity, a.hot_from)} °C</span>
         <button class="chip done" data-close="1" aria-label="Close">✕</button>
       </div>
     </div>`;
@@ -174,7 +198,11 @@ class WaterHACard extends HTMLElement {
           <div class="stat"><span>Past 24 h</span><b>${mm(a.past_24h)}</b></div>
           <div class="stat"><span>Next 24 h</span><b>${mm(a.next_24h)}</b></div>
           <div class="stat total"><span>Total</span><b>${mm(total === "unknown" || total === "unavailable" ? null : total)}</b></div>
+          <button class="stat today${this._edit === "__splits" ? " open" : ""}" data-edit="__splits" title="Change the cool / warm / hot split">
+            <span>Today</span><b><ha-icon icon="${BAND[a.day_type]?.[1] || "mdi:thermometer"}"></ha-icon>${esc(BAND[a.day_type]?.[0] || "–")}${a.temp_max_today != null ? ` ${fmt(a.temp_max_today)}°` : ""}</b>
+          </button>
         </div>
+        ${this._edit === "__splits" ? this._splitsEditor(a) : ""}
         ${this._chart(a.hours || [])}
         <div class="src">${a.error ? `<span class="err">${esc(a.error)}</span>` : esc(a.source || "")}${a.updated ? ` · updated ${esc(when(a.updated))}` : ""}</div>
         <div class="taps">
@@ -214,9 +242,15 @@ class WaterHACard extends HTMLElement {
     const a = s.attributes;
     const [label, color] = STATUS[s.state] || [s.state, "var(--secondary-text-color)"];
     const unit = a.mode === "litres" ? "L" : "min";
-    const amount = st[t.amount]?.state;
     const thr = st[t.rain_threshold]?.state;
     const auto = st[t.automatic]?.state === "on";
+    const seq = st[t.one_at_a_time]?.state === "on";
+    const amounts = ["cool", "warm", "hot"].map((b) => {
+      const id = t[`amount_${b}`];
+      return `<button class="val band${a.day_type === b ? " today" : ""}${this._edit === id ? " open" : ""}" data-edit="${esc(id)}"
+        title="${BAND[b][0]} day amount${a.day_type === b ? " (today)" : ""}"><ha-icon icon="${BAND[b][1]}"></ha-icon>${esc(fmt(st[id]?.state))}</button>`;
+    }).join("");
+    const editing = ["cool", "warm", "hot"].find((b) => this._edit === t[`amount_${b}`]);
     const run = a.run;
     let progress = "";
     if (run) {
@@ -227,16 +261,24 @@ class WaterHACard extends HTMLElement {
     }
     const thrNum = parseFloat(thr);
     const rainNum = parseFloat(total);
-    const rainNote = thrNum > 0
-      ? `skips at ${thrNum} mm${!isNaN(rainNum) ? ` (now ${rainNum.toFixed(1)})` : ""}`
-      : "never skips for rain";
+    const factor = a.rain_factor ?? 1;
+    const rainNote = !(thrNum > 0)
+      ? "ignores rain"
+      : factor <= 0
+        ? `skipping: ${isNaN(rainNum) ? "" : rainNum.toFixed(1)} of ${fmt(thrNum)} mm rain`
+        : factor < 1
+          ? `−${Math.round((1 - factor) * 100)}% for ${rainNum.toFixed(1)} mm rain`
+          : `skips at ${fmt(thrNum)} mm`;
+    const plan = factor > 0 && a.scheduled_amount != null
+      ? ` · ${fmt(a.scheduled_amount)} ${unit} (${(BAND[a.day_type]?.[0] || "").toLowerCase()} day)`
+      : "";
     const last = a.last_result
       ? `Last: ${esc(RESULT[a.last_result] || a.last_result)}${a.last_run ? ` ${esc(when(a.last_result === "skipped_rain" ? a.last_skip : a.last_run))}` : ""}${a.last_litres != null ? ` · ${a.last_litres} L` : a.last_minutes != null ? ` · ${a.last_minutes} min` : ""}`
       : "Not run yet";
     return `<div class="tap">
       <div class="row">
         <button class="name" data-more="${esc(t.status)}">${esc(t.name)}</button>
-        <span class="pill" style="--c:${color}">${esc(label)}</span>
+        <span class="pill" style="--c:${color}">${esc(label)}${s.state === "queued" && a.queue_position ? ` #${a.queue_position}` : ""}</span>
         <span class="grow"></span>
         ${run || s.state === "queued"
           ? `<button class="act stop" data-press="${esc(t.stop)}"><ha-icon icon="mdi:stop"></ha-icon>Stop</button>`
@@ -245,16 +287,18 @@ class WaterHACard extends HTMLElement {
       ${progress}
       <div class="row ctl">
         <label class="sw"><input type="checkbox" data-toggle="${esc(t.automatic)}" ${auto ? "checked" : ""}/> Auto</label>
-        <button class="val${this._edit === t.amount ? " open" : ""}" data-edit="${esc(t.amount)}" title="Amount">
-          <ha-icon icon="mdi:water-outline"></ha-icon>${esc(fmt(amount))} ${unit}</button>
+        <label class="sw" title="Wait for other one-at-a-time taps to finish"><input type="checkbox" data-toggle="${esc(t.one_at_a_time)}" ${seq ? "checked" : ""}/> One at a time</label>
+      </div>
+      <div class="row ctl">
+        <span class="trio" title="Cool / warm / hot day amounts (${unit})">${amounts}<span class="unit">${unit}</span></span>
         <button class="val${this._edit === t.rain_threshold ? " open" : ""}" data-edit="${esc(t.rain_threshold)}" title="Rain threshold (past + next 24 h)">
           <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))} mm` : "off"}</button>
         <button class="val" data-more="${esc(t.start_time)}" title="Start time">
           <ha-icon icon="mdi:clock-outline"></ha-icon>${esc((a.start_time || "").slice(0, 5))}</button>
       </div>
-      ${this._edit === t.amount ? this._editor(t.amount, unit) : ""}
+      ${editing ? this._editor(t[`amount_${editing}`], unit, `Water on a ${BAND[editing][0].toLowerCase()} day for`) : ""}
       ${this._edit === t.rain_threshold ? this._editor(t.rain_threshold, "mm") : ""}
-      <div class="sub">${auto && a.next_run ? `Next ${esc(when(a.next_run))}` : auto ? "No days selected" : "Automatic watering is off"} · ${esc(rainNote)}</div>
+      <div class="sub">${auto && a.next_run ? `Next ${esc(when(a.next_run))}${esc(plan)}` : auto ? "No days selected" : "Automatic watering is off"} · ${esc(rainNote)}</div>
       <div class="sub">${last}</div>
     </div>`;
   }
@@ -293,7 +337,14 @@ const STYLE = `<style>
   .title { font-size: 1.25em; font-weight: 500; flex: 1; }
   button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
   .icon { color: var(--secondary-text-color); padding: 4px; border-radius: 50%; }
-  .rain { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 4px; }
+  .rain { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 4px; }
+  .stat.today { text-align: left; border-radius: 8px; --mdc-icon-size: 18px; }
+  .stat.today b { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+  .stat.today.open b, .stat.today:hover b { color: var(--primary-color); }
+  .trio { display: inline-flex; align-items: center; gap: 4px; }
+  .trio .unit { font-size: 0.85em; color: var(--secondary-text-color); }
+  .val.band { padding: 0 8px; }
+  .val.today { border-color: var(--primary-color); border-width: 2px; font-weight: 500; }
   .stat { display: flex; flex-direction: column; }
   .stat span { font-size: 0.8em; color: var(--secondary-text-color); }
   .stat b { font-size: 1.2em; font-weight: 500; }

@@ -22,6 +22,7 @@ class RainHour:
     end: datetime
     mm: float
     probability: float | None = None
+    temp: float | None = None  # air temperature (°C) at `end`, when the source gives it
 
     def as_dict(self) -> dict[str, Any]:
         return {"t": self.end.isoformat(), "mm": round(self.mm, 2), "p": self.probability}
@@ -52,19 +53,34 @@ def _num(value: Any) -> float | None:
     return number if number >= 0 else None
 
 
+def _temp(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def day_max_temp(hours: list[RainHour], day: Any, tz: Any) -> float | None:
+    """Highest temperature in the hours of local calendar `day` (None if none known)."""
+    temps = [h.temp for h in hours if h.temp is not None and h.end.astimezone(tz).date() == day]
+    return round(max(temps), 1) if temps else None
+
+
 def parse_open_meteo(payload: dict[str, Any]) -> list[RainHour]:
     """Turn an Open-Meteo hourly payload (timeformat=unixtime) into RainHours."""
     hourly = payload.get("hourly") or {}
     times = hourly.get("time") or []
     rain = hourly.get("precipitation") or []
     prob = hourly.get("precipitation_probability") or []
+    temps = hourly.get("temperature_2m") or []
     hours: list[RainHour] = []
     for index, stamp in enumerate(times):
         mm = _num(rain[index]) if index < len(rain) else None
         if mm is None:
             continue
         p = _num(prob[index]) if index < len(prob) else None
-        hours.append(RainHour(datetime.fromtimestamp(int(stamp), timezone.utc), mm, p))
+        t = _temp(temps[index]) if index < len(temps) else None
+        hours.append(RainHour(datetime.fromtimestamp(int(stamp), timezone.utc), mm, p, t))
     return hours
 
 
@@ -137,7 +153,7 @@ async def fetch_open_meteo(
     params = {
         "latitude": f"{latitude:.4f}",
         "longitude": f"{longitude:.4f}",
-        "hourly": "precipitation,precipitation_probability",
+        "hourly": "precipitation,precipitation_probability,temperature_2m",
         "past_days": "2",
         "forecast_days": "3",
         "timezone": "UTC",

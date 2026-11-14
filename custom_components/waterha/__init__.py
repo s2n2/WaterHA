@@ -23,6 +23,7 @@ from .const import (
     MODE_LITRES,
     MODE_MINUTES,
     PLATFORMS,
+    SOFT_OPTIONS,
 )
 from .dashboard_resource import async_register_card
 from .entity import hub_device
@@ -52,7 +53,8 @@ def _structure(entry: ConfigEntry) -> tuple[Any, ...]:
             for sid, sub in entry.subentries.items()
         )
     )
-    return taps, tuple(sorted(entry.options.items()))
+    options = tuple(sorted((k, v) for k, v in entry.options.items() if k not in SOFT_OPTIONS))
+    return taps, options
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -83,9 +85,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def water_now(call: ServiceCall) -> None:
         for hub, tap_id in _targets(call):
-            cfg = hub.tap(tap_id)
-            amount = call.data.get("amount", cfg.get("amount"))
-            await hub.async_water(tap_id, float(amount or 0), call.data.get("mode"), "service")
+            # Without an amount: the tap's amount for today's day type.
+            await hub.async_water(tap_id, call.data.get("amount"), call.data.get("mode"), "service")
 
     async def stop(call: ServiceCall) -> None:
         if call.data.get(ATTR_ENTITY_ID):
@@ -112,6 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> boo
     hub.device_id = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id, **hub_device(entry)
     ).id
+    _remove_old_entities(hass, entry)
     await hub.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     structure = _structure(entry)
@@ -129,6 +131,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> boo
 
     entry.async_on_unload(entry.add_update_listener(_updated))
     return True
+
+
+def _remove_old_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """0.1.x had one amount per tap; 0.2 has cool/warm/hot amounts."""
+    registry = er.async_get(hass)
+    for tap_id in entry.subentries:
+        if entity_id := registry.async_get_entity_id("number", DOMAIN, f"{tap_id}_amount"):
+            registry.async_remove(entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: WaterConfigEntry) -> bool:

@@ -25,23 +25,30 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 
 def tap_data(**over: Any) -> dict[str, Any]:
+    """A tap: 5 / 10 / 15 min on cool / warm / hot days. amount=X sets all three."""
     data = {
         "name": "Lawn",
         "tap_entity": TAP,
         "mode": "minutes",
-        "amount": 10.0,
+        "amount_cool": 5.0,
+        "amount_warm": 10.0,
+        "amount_hot": 15.0,
+        "sequential": True,
         "start_time": "06:00:00",
         "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
         "rain_threshold": 5.0,
         "max_minutes": 45,
         "enabled": True,
     }
+    if "amount" in over:
+        amount = float(over.pop("amount"))
+        data.update(amount_cool=amount, amount_warm=amount, amount_hot=amount)
     data.update(over)
     return data
 
 
-def open_meteo_payload(now: datetime, past_mm: float, next_mm: float) -> dict[str, Any]:
-    """48 h either side of now; rain spread evenly over the 24 h each side."""
+def open_meteo_payload(now: datetime, past_mm: float, next_mm: float, temp: float = 20.0) -> dict[str, Any]:
+    """48 h either side of now; rain spread evenly over the 24 h each side; a flat temperature."""
     base = now.replace(minute=0, second=0, microsecond=0)
     times, rain = [], []
     for h in range(-48, 49):
@@ -53,7 +60,14 @@ def open_meteo_payload(now: datetime, past_mm: float, next_mm: float) -> dict[st
             rain.append(next_mm / 24)
         else:
             rain.append(0.0)
-    return {"hourly": {"time": times, "precipitation": rain, "precipitation_probability": [50] * len(times)}}
+    return {
+        "hourly": {
+            "time": times,
+            "precipitation": rain,
+            "precipitation_probability": [50] * len(times),
+            "temperature_2m": [temp] * len(times),
+        }
+    }
 
 
 class Taps:
@@ -82,13 +96,13 @@ class Taps:
 
 @pytest.fixture
 def rain(aioclient_mock):
-    """Call rain(past, next, now) to set what Open-Meteo returns."""
+    """Call rain(past, next, now, temp=) to set what Open-Meteo returns."""
 
-    def _set(past_mm: float, next_mm: float, now: datetime | None = None) -> None:
+    def _set(past_mm: float, next_mm: float, now: datetime | None = None, temp: float = 20.0) -> None:
         aioclient_mock.clear_requests()
         aioclient_mock.get(
             OPEN_METEO_URL,
-            json=open_meteo_payload(now or datetime.now(timezone.utc), past_mm, next_mm),
+            json=open_meteo_payload(now or datetime.now(timezone.utc), past_mm, next_mm, temp),
         )
 
     return _set
@@ -103,7 +117,7 @@ def make_entry(hass: HomeAssistant):
             entry_id=ENTRY_ID,
             title="Garden watering",
             unique_id=DOMAIN,
-            options={"forecast_source": "open_meteo", "sequential": True, **options},
+            options={"forecast_source": "open_meteo", "cool_below": 16.0, "hot_from": 23.0, **options},
             subentries_data=[
                 ConfigSubentryData(
                     data=t, subentry_id=f"tap{i + 1}", subentry_type="tap", title=t["name"], unique_id=None

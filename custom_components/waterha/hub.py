@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import ATTR_ENTITY_ID, EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.core import CoreState, Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -30,11 +30,16 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BAND_COOL,
+    BAND_HOT,
+    BAND_WARM,
     CONF_AMOUNT,
+    CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
     CONF_FLOW_SENSOR,
     CONF_FORECAST_SOURCE,
+    CONF_HOT_FROM,
     CONF_MAX_MINUTES,
     CONF_MODE,
     CONF_NAME,
@@ -44,6 +49,9 @@ from .const import (
     CONF_TAP_ENTITY,
     CONF_WEATHER_ENTITY,
     DAYS,
+    DEFAULT_BAND_AMOUNTS,
+    DEFAULT_COOL_BELOW,
+    DEFAULT_HOT_FROM,
     DEFAULT_MAX_MINUTES,
     DOMAIN,
     FLOW_TICK_SECONDS,
@@ -63,14 +71,23 @@ from .const import (
     RESULT_STOPPED_EXTERNALLY,
     SIGNAL_UPDATE,
     SOURCE_WEATHER,
+    STARTUP_RECHECK_SECONDS,
     STATUS_DISABLED,
     STATUS_IDLE,
     STATUS_QUEUED,
     STATUS_RAIN_HOLD,
     STATUS_WATERING,
     SUBENTRY_TAP,
+    amount_key,
 )
-from .rain import RainHour, RainSummary, fetch_open_meteo, parse_weather_forecast, summarise
+from .rain import (
+    RainHour,
+    RainSummary,
+    day_max_temp,
+    fetch_open_meteo,
+    parse_weather_forecast,
+    summarise,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +124,27 @@ def flow_lps(state: Any) -> float:
         return 0.0
     unit = state.attributes.get("unit_of_measurement") or "m³/h"
     return value * FLOW_TO_LPS.get(unit, FLOW_TO_LPS["m³/h"])
+
+
+def band_for(temp: float | None, cool_below: float, hot_from: float) -> str:
+    """Cool, warm or hot day for a forecast high; warm when the high is unknown."""
+    if temp is None:
+        return BAND_WARM
+    if temp < cool_below:
+        return BAND_COOL
+    if temp >= hot_from:
+        return BAND_HOT
+    return BAND_WARM
+
+
+def band_amount(cfg: dict[str, Any], band: str) -> float:
+    """A tap's amount for a day type (0.1.x taps had one `amount` for every day)."""
+    value = cfg.get(amount_key(band))
+    if value is None:
+        value = cfg.get(CONF_AMOUNT)
+    if value is None:
+        value = DEFAULT_BAND_AMOUNTS.get(cfg.get(CONF_MODE, MODE_MINUTES), {}).get(band, 0)
+    return float(value)
 
 
 def parse_time(value: str | None) -> time | None:
@@ -146,6 +184,8 @@ class Run:
     entity_id: str = ""
     name: str = ""
     flow: bool = False
+    sequential: bool = True
+    band: str | None = None
     cfg_max_seconds: float = 0.0
     litres: float = 0.0
     rate_lps: float = 0.0
@@ -174,7 +214,9 @@ class WaterHub:
         self.rain_error: str | None = None
         self.rain_updated: datetime | None = None
         self.runs: dict[str, Run] = {}
-        self.queue: list[tuple[str, float, str, str]] = []
+        # (tap_id, amount, mode, reason, band) of one-at-a-time taps waiting their turn
+        self.queue: list[tuple[str, float, str, str, str | None]] = []
+        self._hours: list[RainHour] = []  # Open-Meteo hourly, kept for temperatures
         self._store: Store[dict[str, Any]] = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._state: dict[str, dict[str, Any]] = {}
         self._unsubs: list[Callable[[], None]] = []
@@ -203,12 +245,21 @@ class WaterHub:
         stored = await self._store.async_load() or {}
         self._state = stored.get("taps", {})
         active = stored.get("active", {})
-        if active:
-            # Close taps left open by a restart once their integrations are up.
-            async def _at_started(_hass: HomeAssistant) -> None:
-                await self._recover(active)
-                self.notify()
+        # Set up while HA is starting = a restart: close every tap once their
+        # integrations are up, in case one was stuck open. A reload while HA is
+        # running only closes runs WaterHA itself had going.
+        ha_starting = self.hass.state is not CoreState.running
 
+        async def _at_started(_hass: HomeAssistant) -> None:
+            await self._recover(active)
+            if ha_starting:
+                await self.async_close_all_taps("Home Assistant started")
+                self._unsubs.append(
+                    async_call_later(self.hass, STARTUP_RECHECK_SECONDS, self._startup_recheck)
+                )
+            self.notify()
+
+        if active or ha_starting:
             self._unsubs.append(async_at_started(self.hass, _at_started))
         self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
         self._unsubs.append(
@@ -236,6 +287,25 @@ class WaterHub:
         for tap_id in list(self.runs):
             await self.async_finish(tap_id, RESULT_INTERRUPTED)
         await self._store.async_save(self._as_store())
+
+    async def async_close_all_taps(self, why: str, only_open: bool = False) -> None:
+        """Send close to every configured tap not running a WaterHA run."""
+        for tap_id, sub in self.taps.items():
+            entity_id = sub.data.get(CONF_TAP_ENTITY)
+            if not entity_id or tap_id in self.runs:
+                continue
+            state = self.hass.states.get(entity_id)
+            if only_open and (state is None or state.state not in OPEN_STATES):
+                continue
+            if state is not None and state.state in OPEN_STATES:
+                _LOGGER.warning("Closing %s (%s): it was open", entity_id, why)
+            try:
+                await self._set_tap(entity_id, False)
+            except HomeAssistantError as err:
+                _LOGGER.warning("Could not close %s (%s): %s", entity_id, why, err)
+
+    async def _startup_recheck(self, _now: datetime) -> None:
+        await self.async_close_all_taps("still open after start", only_open=True)
 
     async def _recover(self, active: dict[str, Any]) -> None:
         """A run that was in progress when HA stopped: close the tap."""
@@ -279,6 +349,33 @@ class WaterHub:
         )
         self.notify()
 
+    async def async_set_hub_option(self, key: str, value: Any) -> None:
+        """Change a hub option (temperature splits) from an entity."""
+        self.hass.config_entries.async_update_entry(
+            self.entry, options={**self.entry.options, key: value}
+        )
+        self.notify()
+
+    # ----------------------------------------------------------- temperature
+    @property
+    def cool_below(self) -> float:
+        return float(self.entry.options.get(CONF_COOL_BELOW, DEFAULT_COOL_BELOW))
+
+    @property
+    def hot_from(self) -> float:
+        return float(self.entry.options.get(CONF_HOT_FROM, DEFAULT_HOT_FROM))
+
+    def temp_max_today(self) -> float | None:
+        """Today's forecast high (local day) from Open-Meteo."""
+        tz = dt_util.get_default_time_zone()
+        return day_max_temp(self._hours, dt_util.now().date(), tz)
+
+    def band_today(self) -> str:
+        return band_for(self.temp_max_today(), self.cool_below, self.hot_from)
+
+    def amount_today(self, tap_id: str) -> float:
+        return band_amount(self.tap(tap_id), self.band_today())
+
     # ------------------------------------------------------------------ rain
     async def _refresh_rain_cb(self, _now: datetime) -> None:
         await self.async_refresh_rain()
@@ -293,6 +390,7 @@ class WaterHub:
             self.rain_error = f"Open-Meteo: {err}"
             self.notify()
             return
+        self._hours = past
         future: list[RainHour] = past
         source = "Open-Meteo"
         self.rain_error = None
@@ -327,9 +425,23 @@ class WaterHub:
         return self.rain.total_mm if self.rain else None
 
     def rain_hold(self, tap_id: str) -> bool:
+        return self.rain_factor(tap_id) <= 0
+
+    def rain_factor(self, tap_id: str) -> float:
+        """Share of the amount a scheduled run gives after rain: 1 - rain / threshold.
+
+        2.5 mm against a 5 mm threshold waters 50%; at or over it, 0 (skip).
+        No threshold, or no rain data, waters in full.
+        """
         threshold = float(self.tap(tap_id).get(CONF_RAIN_THRESHOLD) or 0)
         total = self.rain_total()
-        return threshold > 0 and total is not None and total >= threshold
+        if threshold <= 0 or total is None:
+            return 1.0
+        return max(0.0, 1.0 - total / threshold)
+
+    def scheduled_amount(self, tap_id: str) -> float:
+        """What a scheduled run would give now: today's day-type amount, less for rain."""
+        return round(self.amount_today(tap_id) * self.rain_factor(tap_id), 1)
 
     # -------------------------------------------------------------- schedule
     def next_run(self, tap_id: str) -> datetime | None:
@@ -387,30 +499,59 @@ class WaterHub:
             state["last_result"] = RESULT_SKIPPED_RAIN
             self._save()
             return
-        cfg = self.tap(tap_id)
-        await self.async_water(tap_id, float(cfg.get(CONF_AMOUNT) or 0), cfg.get(CONF_MODE), "schedule")
+        band = self.band_today()
+        factor = self.rain_factor(tap_id)
+        amount = round(band_amount(self.tap(tap_id), band) * factor, 1)
+        state.update(
+            last_check_temp=self.temp_max_today(), last_check_band=band, last_rain_factor=round(factor, 2)
+        )
+        if amount <= 0:
+            return
+        await self.async_water(tap_id, amount, None, "schedule", band)
 
     # ------------------------------------------------------------------ runs
+    def _sequential(self, tap_id: str) -> bool:
+        return bool(self.tap(tap_id).get(CONF_SEQUENTIAL, True))
+
+    def _sequential_busy(self) -> bool:
+        """A one-at-a-time tap is running, so other one-at-a-time taps must wait."""
+        return any(run.sequential for run in self.runs.values())
+
     async def async_water(
-        self, tap_id: str, amount: float, mode: str | None = None, reason: str = "manual"
+        self,
+        tap_id: str,
+        amount: float | None = None,
+        mode: str | None = None,
+        reason: str = "manual",
+        band: str | None = None,
     ) -> None:
-        """Start (or queue) a run. Manual runs ignore the rain threshold."""
+        """Start (or queue) a run. Manual runs ignore the rain threshold.
+
+        Without an amount the tap's amount for today's day type is used. A
+        one-at-a-time tap waits while another one-at-a-time tap runs; the queue
+        runs in the order taps became due.
+        """
         if tap_id not in self.taps:
             raise HomeAssistantError(f"Unknown WaterHA tap {tap_id}")
         cfg = self.tap(tap_id)
         mode = mode or cfg.get(CONF_MODE, MODE_MINUTES)
         if mode == MODE_LITRES and not cfg.get(CONF_FLOW_SENSOR):
             raise HomeAssistantError(f"{cfg.get(CONF_NAME)} has no flow sensor for litres mode")
+        if amount is None:
+            band = band or self.band_today()
+            amount = band_amount(cfg, band)
         if amount <= 0 or tap_id in self.runs:
             return
-        if self.entry.options.get(CONF_SEQUENTIAL, True) and self.runs:
+        if self._sequential(tap_id) and self._sequential_busy():
             self.queue = [item for item in self.queue if item[0] != tap_id]
-            self.queue.append((tap_id, amount, mode, reason))
+            self.queue.append((tap_id, amount, mode, reason, band))
             self.notify()
             return
-        await self._start(tap_id, amount, mode, reason)
+        await self._start(tap_id, amount, mode, reason, band)
 
-    async def _start(self, tap_id: str, amount: float, mode: str, reason: str) -> None:
+    async def _start(
+        self, tap_id: str, amount: float, mode: str, reason: str, band: str | None = None
+    ) -> None:
         cfg = self.tap(tap_id)
         now = dt_util.utcnow()
         max_minutes = float(cfg.get(CONF_MAX_MINUTES) or DEFAULT_MAX_MINUTES)
@@ -427,6 +568,8 @@ class WaterHub:
             entity_id=cfg[CONF_TAP_ENTITY],
             name=cfg.get(CONF_NAME, ""),
             flow=bool(flow_entity),
+            sequential=bool(cfg.get(CONF_SEQUENTIAL, True)),
+            band=band,
             cfg_max_seconds=float(cfg.get(CONF_MAX_MINUTES) or DEFAULT_MAX_MINUTES) * 60,
             last_sample=now,
         )
@@ -442,7 +585,7 @@ class WaterHub:
             _LOGGER.error("Could not open %s: %s", entity_id, err)
             await self._next_in_queue()
             return
-        _LOGGER.info("Watering %s: %s %s (%s)", cfg.get(CONF_NAME), amount, mode, reason)
+        _LOGGER.info("Watering %s: %s %s (%s, %s day)", cfg.get(CONF_NAME), amount, mode, reason, band)
 
         @callback
         def _tap_changed(event: Event[EventStateChangedData]) -> None:
@@ -556,6 +699,8 @@ class WaterHub:
             last_end=end.isoformat(),
             last_result=result,
             last_reason=run.reason,
+            last_band=run.band,
+            last_target=run.target,
             last_minutes=round((end - run.started).total_seconds() / 60, 1),
             last_litres=round(run.litres, 1) if run.flow else None,
         )
@@ -563,10 +708,10 @@ class WaterHub:
         self.notify()
 
     async def _next_in_queue(self) -> None:
-        while self.queue and not self.runs:
-            tap_id, amount, mode, reason = self.queue.pop(0)
-            if tap_id in self.taps:
-                await self._start(tap_id, amount, mode, reason)
+        while self.queue and not self._sequential_busy():
+            tap_id, amount, mode, reason, band = self.queue.pop(0)
+            if tap_id in self.taps and tap_id not in self.runs:
+                await self._start(tap_id, amount, mode, reason, band)
         self.notify()
 
     async def async_stop_tap(self, tap_id: str) -> None:
@@ -595,10 +740,19 @@ class WaterHub:
         state = self.tap_state(tap_id)
         run = self.runs.get(tap_id)
         nxt = self.next_run(tap_id)
+        band = self.band_today()
         attrs: dict[str, Any] = {
             "tap_entity": cfg.get(CONF_TAP_ENTITY),
             "mode": cfg.get(CONF_MODE),
-            "amount": cfg.get(CONF_AMOUNT),
+            "amounts": {b: band_amount(cfg, b) for b in (BAND_COOL, BAND_WARM, BAND_HOT)},
+            "day_type": band,
+            "amount_today": band_amount(cfg, band),
+            "rain_factor": round(self.rain_factor(tap_id), 2),
+            "scheduled_amount": self.scheduled_amount(tap_id),
+            "one_at_a_time": bool(cfg.get(CONF_SEQUENTIAL, True)),
+            "queue_position": next(
+                (i + 1 for i, item in enumerate(self.queue) if item[0] == tap_id), None
+            ),
             "start_time": cfg.get(CONF_START_TIME),
             "days": cfg.get(CONF_DAYS, []),
             "rain_threshold_mm": cfg.get(CONF_RAIN_THRESHOLD),
@@ -606,6 +760,9 @@ class WaterHub:
             "next_run": nxt.isoformat() if nxt else None,
             "last_run": state.get("last_run"),
             "last_result": state.get("last_result"),
+            "last_band": state.get("last_band"),
+            "last_target": state.get("last_target"),
+            "last_rain_factor": state.get("last_rain_factor"),
             "last_minutes": state.get("last_minutes"),
             "last_litres": state.get("last_litres"),
             "last_skip": state.get("last_skip"),

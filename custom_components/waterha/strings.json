@@ -7,16 +7,19 @@
         "data": {
           "forecast_source": "Rain forecast from",
           "weather_entity": "Weather entity",
-          "sequential": "Run one tap at a time"
+          "cool_below": "Cool day below",
+          "hot_from": "Hot day from"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
-          "sequential": "Taps due at the same time wait their turn, keeping water pressure up."
+          "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
+          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day."
         }
       }
     },
     "error": {
-      "weather_required": "Choose a weather entity, or use Open-Meteo."
+      "weather_required": "Choose a weather entity, or use Open-Meteo.",
+      "splits_order": "Hot day must start above the cool day limit."
     },
     "abort": {
       "already_configured": "WaterHA is already set up. Add taps from its integration page."
@@ -29,16 +32,19 @@
         "data": {
           "forecast_source": "Rain forecast from",
           "weather_entity": "Weather entity",
-          "sequential": "Run one tap at a time"
+          "cool_below": "Cool day below",
+          "hot_from": "Hot day from"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
-          "sequential": "Taps due at the same time wait their turn, keeping water pressure up."
+          "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
+          "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day."
         }
       }
     },
     "error": {
-      "weather_required": "Choose a weather entity, or use Open-Meteo."
+      "weather_required": "Choose a weather entity, or use Open-Meteo.",
+      "splits_order": "Hot day must start above the cool day limit."
     }
   },
   "config_subentries": {
@@ -54,19 +60,24 @@
             "name": "Name",
             "tap_entity": "Tap (switch or valve)",
             "mode": "Water by",
-            "amount": "Amount (minutes or litres)",
+            "amount_cool": "Cool day amount",
+            "amount_warm": "Warm day amount",
+            "amount_hot": "Hot day amount",
             "flow_sensor": "Flow-rate sensor",
             "start_time": "Start time",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
-            "enabled": "Automatic watering"
+            "enabled": "Automatic watering",
+            "sequential": "One at a time"
           },
           "data_description": {
-            "amount": "Minutes the tap stays open, or litres to deliver (litres needs a flow-rate sensor).",
             "flow_sensor": "Needed for litres; also records how much water each run used.",
-            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this. 0 never skips.",
-            "max_minutes": "Safety limit: the tap closes after this long whatever happens."
+            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this; less rain shortens the run in proportion (half the threshold = half the amount). 0 = ignore rain.",
+            "max_minutes": "Safety limit: the tap closes after this long whatever happens.",
+            "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
+            "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
+            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another."
           }
         },
         "reconfigure": {
@@ -75,19 +86,24 @@
             "name": "Name",
             "tap_entity": "Tap (switch or valve)",
             "mode": "Water by",
-            "amount": "Amount (minutes or litres)",
+            "amount_cool": "Cool day amount",
+            "amount_warm": "Warm day amount",
+            "amount_hot": "Hot day amount",
             "flow_sensor": "Flow-rate sensor",
             "start_time": "Start time",
             "days": "Days",
             "rain_threshold": "Rain threshold",
             "max_minutes": "Maximum run time",
-            "enabled": "Automatic watering"
+            "enabled": "Automatic watering",
+            "sequential": "One at a time"
           },
           "data_description": {
-            "amount": "Minutes the tap stays open, or litres to deliver (litres needs a flow-rate sensor).",
             "flow_sensor": "Needed for litres; also records how much water each run used.",
-            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this. 0 never skips.",
-            "max_minutes": "Safety limit: the tap closes after this long whatever happens."
+            "rain_threshold": "Skip a scheduled run when rain in the past 24 h plus the next 24 h forecast reaches this; less rain shortens the run in proportion (half the threshold = half the amount). 0 = ignore rain.",
+            "max_minutes": "Safety limit: the tap closes after this long whatever happens.",
+            "amount_cool": "Minutes or litres on a cool day (litres needs a flow-rate sensor).",
+            "amount_hot": "The day type comes from today's forecast high and the splits set on the hub.",
+            "sequential": "Wait for other one-at-a-time taps to finish, so taps set for the same time run one after another."
           }
         }
       },
@@ -155,25 +171,48 @@
       },
       "last_water": {
         "name": "Water given"
+      },
+      "temp_max_today": {
+        "name": "Forecast high today"
+      },
+      "day_type": {
+        "name": "Day type",
+        "state": {
+          "cool": "Cool",
+          "warm": "Warm",
+          "hot": "Hot"
+        }
       }
     },
     "switch": {
       "automatic": {
         "name": "Automatic watering"
+      },
+      "one_at_a_time": {
+        "name": "One at a time"
       }
     },
     "number": {
-      "amount_minutes": {
-        "name": "Minutes to water"
+      "amount_cool": {
+        "name": "Cool day amount"
       },
-      "amount_litres": {
-        "name": "Litres to water"
+      "amount_warm": {
+        "name": "Warm day amount"
+      },
+      "amount_hot": {
+        "name": "Hot day amount"
       },
       "rain_threshold": {
         "name": "Rain threshold"
       },
       "max_minutes": {
         "name": "Maximum run time"
+      },
+      "cool_below": {
+        "name": "Cool day below"
+      },
+      "hot_from": {
+        "name": "Hot day from"
       }
     },
     "time": {
@@ -199,7 +238,7 @@
   "services": {
     "water_now": {
       "name": "Water now",
-      "description": "Open a WaterHA tap now for its set amount, or the amount given. Ignores the rain threshold.",
+      "description": "Open a WaterHA tap now for today's amount (by day type), or the amount given. Ignores rain.",
       "fields": {
         "entity_id": {
           "name": "Tap",
@@ -207,7 +246,7 @@
         },
         "amount": {
           "name": "Amount",
-          "description": "Minutes or litres; defaults to the tap's setting."
+          "description": "Minutes or litres; defaults to the tap's amount for today's day type."
         },
         "mode": {
           "name": "Water by",

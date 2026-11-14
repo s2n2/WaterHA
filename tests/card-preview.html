@@ -25,15 +25,24 @@ const hours = Array.from({ length: 49 }, (_, i) => ({
   p: 60,
 }));
 const states = {
-  "sensor.rain": { entity_id: "sensor.rain", state: "4.1", last_updated: "1", attributes: {
-    waterha: "rain", hours, past_24h: 1.3, next_24h: 2.8, source: "Open-Meteo", updated: new Date().toISOString(),
+  "sensor.rain": { entity_id: "sensor.rain", state: "2.5", last_updated: "1", attributes: {
+    waterha: "rain", hours, past_24h: 1.3, next_24h: 1.2, source: "Open-Meteo", updated: new Date().toISOString(),
+    day_type: "warm", temp_max_today: 19.4, cool_below: 16, hot_from: 23,
+    cool_below_entity: "number.cool_below", hot_from_entity: "number.hot_from",
     taps: [{ id: "t1", name: "Lawn", status: "sensor.lawn_status", next_run: "sensor.lawn_next_run",
-      automatic: "switch.lawn_auto", amount: "number.lawn_amount", rain_threshold: "number.lawn_thr",
+      automatic: "switch.lawn_auto", one_at_a_time: "switch.lawn_seq", amount_cool: "number.lawn_cool",
+      amount_warm: "number.lawn_warm", amount_hot: "number.lawn_hot", rain_threshold: "number.lawn_thr",
       start_time: "time.lawn_start", water_now: "button.lawn_water", stop: "button.lawn_stop" }] } },
   "sensor.lawn_status": { state: "idle", last_updated: "1", attributes: { mode: "minutes", start_time: "06:00:00",
+    day_type: "warm", amount_today: 10, rain_factor: 0.5, scheduled_amount: 5,
     next_run: new Date(now + 86400000).toISOString(), last_result: "completed", last_run: new Date(now - 86400000).toISOString(), last_minutes: 10 } },
   "switch.lawn_auto": { state: "on", last_updated: "1", attributes: {} },
-  "number.lawn_amount": { state: "10.0", last_updated: "1", attributes: { min: 1, max: 240, step: 1 } },
+  "switch.lawn_seq": { state: "on", last_updated: "1", attributes: {} },
+  "number.lawn_cool": { state: "5.0", last_updated: "1", attributes: { min: 0, max: 240, step: 1 } },
+  "number.lawn_warm": { state: "10.0", last_updated: "1", attributes: { min: 0, max: 240, step: 1 } },
+  "number.lawn_hot": { state: "15.0", last_updated: "1", attributes: { min: 0, max: 240, step: 1 } },
+  "number.cool_below": { state: "16.0", last_updated: "1", attributes: { min: -10, max: 50, step: 0.5 } },
+  "number.hot_from": { state: "23.0", last_updated: "1", attributes: { min: -10, max: 50, step: 0.5 } },
   "number.lawn_thr": { state: "5.0", last_updated: "1", attributes: { min: 0, max: 200, step: 0.5 } },
   "time.lawn_start": { state: "06:00:00", last_updated: "1", attributes: {} },
 };

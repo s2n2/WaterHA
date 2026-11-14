@@ -10,13 +10,19 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfPrecipitationDepth, UnitOfTime, UnitOfVolume
+from homeassistant.const import (
+    UnitOfPrecipitationDepth,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolume,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BANDS,
     CONF_FLOW_SENSOR,
     CONF_MODE,
     CONF_NAME,
@@ -36,7 +42,10 @@ TAP_ROLES = {
     "next_run": ("sensor", "next_run"),
     "last_run": ("sensor", "last_run"),
     "automatic": ("switch", "automatic"),
-    "amount": ("number", "amount"),
+    "one_at_a_time": ("switch", "one_at_a_time"),
+    "amount_cool": ("number", "amount_cool"),
+    "amount_warm": ("number", "amount_warm"),
+    "amount_hot": ("number", "amount_hot"),
     "rain_threshold": ("number", "rain_threshold"),
     "start_time": ("time", "start_time"),
     "water_now": ("button", "water_now"),
@@ -52,7 +61,13 @@ async def async_setup_entry(
         hass,
         entry,
         async_add_entities,
-        [RainSensor(hub, "rain_past_24h"), RainSensor(hub, "rain_next_24h"), RainWindowSensor(hub)],
+        [
+            RainSensor(hub, "rain_past_24h"),
+            RainSensor(hub, "rain_next_24h"),
+            RainWindowSensor(hub),
+            TempTodaySensor(hub),
+            DayTypeSensor(hub),
+        ],
         lambda hub, tap_id: [
             TapStatusSensor(hub, tap_id),
             NextRunSensor(hub, tap_id),
@@ -105,7 +120,14 @@ class RainWindowSensor(RainSensor):
                 for role, (platform, key) in TAP_ROLES.items()
             }
             taps.append({"id": tap_id, "name": sub.data.get(CONF_NAME), **ids})
+        hub_id = self.hub.entry.entry_id
         return {
+            "day_type": self.hub.band_today(),
+            "temp_max_today": self.hub.temp_max_today(),
+            "cool_below": self.hub.cool_below,
+            "hot_from": self.hub.hot_from,
+            "cool_below_entity": registry.async_get_entity_id("number", DOMAIN, f"{hub_id}_cool_below"),
+            "hot_from_entity": registry.async_get_entity_id("number", DOMAIN, f"{hub_id}_hot_from"),
             "waterha": "rain",
             "hours": [h.as_dict() for h in rain.hours] if rain else [],
             "past_24h": rain.past_mm if rain else None,
@@ -117,10 +139,47 @@ class RainWindowSensor(RainSensor):
         }
 
 
+class TempTodaySensor(WaterEntity, SensorEntity):
+    """Today's forecast high, which picks cool, warm or hot amounts."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "temp_max_today")
+
+    @property
+    def native_value(self) -> float | None:
+        return self.hub.temp_max_today()
+
+
+class DayTypeSensor(WaterEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(BANDS)
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "day_type")
+
+    @property
+    def native_value(self) -> str:
+        return self.hub.band_today()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "temp_max_today": self.hub.temp_max_today(),
+            "cool_below": self.hub.cool_below,
+            "hot_from": self.hub.hot_from,
+        }
+
+
 class TapStatusSensor(TapEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [STATUS_IDLE, STATUS_WATERING, STATUS_QUEUED, STATUS_DISABLED, STATUS_RAIN_HOLD]
-    _unrecorded_attributes = frozenset({"run", "days", "tap_entity", "rain_window_mm"})
+    _unrecorded_attributes = frozenset(
+        {"run", "days", "tap_entity", "rain_window_mm", "amounts", "queue_position"}
+    )
 
     def __init__(self, hub: WaterHub, tap_id: str) -> None:
         super().__init__(hub, tap_id, "status")

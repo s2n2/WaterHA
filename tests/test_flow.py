@@ -13,15 +13,20 @@ async def test_user_flow_creates_single_hub(hass: HomeAssistant, rain):
     rain(0, 0)
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
+    hub = {"cool_below": 16, "hot_from": 23}
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"forecast_source": "weather_entity", "sequential": True}
+        result["flow_id"], {"forecast_source": "weather_entity", **hub}
     )
     assert result["errors"] == {"weather_entity": "weather_required"}
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"forecast_source": "open_meteo", "sequential": False}
+        result["flow_id"], {"forecast_source": "open_meteo", "cool_below": 20, "hot_from": 18}
+    )
+    assert result["errors"] == {"hot_from": "splits_order"}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"forecast_source": "open_meteo", "cool_below": 14, "hot_from": 25}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["options"] == {"forecast_source": "open_meteo", "sequential": False}
+    assert result["options"] == {"forecast_source": "open_meteo", "cool_below": 14.0, "hot_from": 25.0}
     await hass.async_block_till_done()
 
     again = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})

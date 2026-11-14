@@ -44,7 +44,12 @@ async def test_entities_and_rain(hass: HomeAssistant, setup, rain):
     assert window.attributes["taps"][0]["water_now"] == "button.lawn_water_now"
     assert len(window.attributes["hours"]) >= 48
     assert hass.states.get("sensor.lawn_status").state == "idle"
-    assert hass.states.get("number.lawn_minutes_to_water").state == "10.0"
+    assert hass.states.get("number.lawn_warm_day_amount").state == "10.0"
+    assert hass.states.get("number.lawn_hot_day_amount").attributes["unit_of_measurement"] == "min"
+    assert hass.states.get("sensor.garden_watering_day_type").state == "warm"
+    assert float(hass.states.get("sensor.garden_watering_forecast_high_today").state) == 20.0
+    assert hass.states.get("switch.lawn_one_at_a_time").state == "on"
+    assert window.attributes["taps"][0]["amount_hot"] == "number.lawn_hot_day_amount"
     assert hass.states.get("switch.lawn_automatic_watering").state == "on"
 
 

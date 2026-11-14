@@ -6,7 +6,6 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_AMOUNT
 from .entity import TapEntity, WaterEntity, add_entities
 from .hub import WaterHub
 
@@ -25,10 +24,10 @@ async def async_setup_entry(
 
 
 class WaterNowButton(TapEntity, ButtonEntity):
-    """Water now with the tap's set amount (ignores the rain threshold)."""
+    """Water now with today's amount for the day type (ignores the rain threshold)."""
 
     async def async_press(self) -> None:
-        await self.hub.async_water(self.tap_id, float(self.cfg.get(CONF_AMOUNT) or 0), None, "manual")
+        await self.hub.async_water(self.tap_id, None, None, "manual")
 
 
 class StopButton(TapEntity, ButtonEntity):

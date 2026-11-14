@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -20,7 +20,10 @@ SUBENTRY_TAP = "tap"
 # Hub (config entry) options
 CONF_FORECAST_SOURCE = "forecast_source"
 CONF_WEATHER_ENTITY = "weather_entity"
-CONF_SEQUENTIAL = "sequential"
+CONF_COOL_BELOW = "cool_below"
+CONF_HOT_FROM = "hot_from"
+# Hub options that change no entities, so editing them never reloads.
+SOFT_OPTIONS = {CONF_COOL_BELOW, CONF_HOT_FROM}
 SOURCE_OPEN_METEO = "open_meteo"
 SOURCE_WEATHER = "weather_entity"
 
@@ -28,7 +31,8 @@ SOURCE_WEATHER = "weather_entity"
 CONF_NAME = "name"
 CONF_TAP_ENTITY = "tap_entity"
 CONF_MODE = "mode"
-CONF_AMOUNT = "amount"
+CONF_AMOUNT = "amount"  # 0.1.x single amount; read as the fallback for every band
+CONF_SEQUENTIAL = "sequential"  # one at a time: queue behind other one-at-a-time taps
 CONF_FLOW_SENSOR = "flow_sensor"
 CONF_START_TIME = "start_time"
 CONF_DAYS = "days"
@@ -43,6 +47,27 @@ DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 DEFAULT_AMOUNT_MINUTES = 10.0
 DEFAULT_AMOUNT_LITRES = 50.0
+
+# Day types from today's forecast high: cool < cool_below <= warm < hot_from <= hot.
+BAND_COOL = "cool"
+BAND_WARM = "warm"
+BAND_HOT = "hot"
+BANDS = [BAND_COOL, BAND_WARM, BAND_HOT]
+DEFAULT_COOL_BELOW = 16.0
+DEFAULT_HOT_FROM = 23.0
+DEFAULT_BAND_AMOUNTS = {
+    "minutes": {BAND_COOL: 5.0, BAND_WARM: 10.0, BAND_HOT: 15.0},
+    "litres": {BAND_COOL: 20.0, BAND_WARM: 40.0, BAND_HOT: 60.0},
+}
+
+
+def amount_key(band: str) -> str:
+    return f"amount_{band}"
+
+
+# At HA start every tap is closed, then checked again after this long
+# (radio integrations may not be ready the first time).
+STARTUP_RECHECK_SECONDS = 60
 DEFAULT_START_TIME = "06:00:00"
 DEFAULT_RAIN_THRESHOLD = 5.0
 DEFAULT_MAX_MINUTES = 45
