@@ -177,3 +177,16 @@ async def test_0_1_tap_with_single_amount_still_works(hass: HomeAssistant, setup
     await hass.services.async_call("button", "press", {"entity_id": "button.lawn_water_now"}, blocking=True)
     await hass.async_block_till_done()
     assert run_target(hass, "lawn") == 7
+
+
+async def test_failed_rain_fetch_retries_soon(hass: HomeAssistant, setup, rain, aioclient_mock, freezer):
+    """At startup the network may not be up: retry in 2 minutes, not 30."""
+    from custom_components.waterha.rain import OPEN_METEO_URL
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(OPEN_METEO_URL, exc=TimeoutError())
+    await setup()
+    assert hass.states.get("sensor.garden_watering_rain_past_24_h").state == "unavailable"
+    rain(1.0, 0.5)
+    await advance(hass, freezer, 125, 25)
+    assert float(hass.states.get("sensor.garden_watering_rain_past_24_h").state) == pytest.approx(1.0, abs=0.1)

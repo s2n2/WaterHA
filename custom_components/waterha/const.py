@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -75,6 +75,8 @@ DEFAULT_MAX_MINUTES = 45
 # Rain is refreshed this often; the window is 24 h either side of now.
 RAIN_REFRESH_MINUTES = 30
 RAIN_WINDOW_HOURS = 24
+# After a failed fetch (e.g. network not up yet at startup), try again this soon.
+RAIN_RETRY_SECONDS = 120
 
 # Litres mode: stop if this little water has flowed after this long.
 NO_FLOW_AFTER_SECONDS = 300

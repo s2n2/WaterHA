@@ -60,6 +60,7 @@ from .const import (
     NO_FLOW_AFTER_SECONDS,
     NO_FLOW_LITRES,
     RAIN_REFRESH_MINUTES,
+    RAIN_RETRY_SECONDS,
     RAIN_WINDOW_HOURS,
     RESULT_COMPLETED,
     RESULT_FAILED,
@@ -220,6 +221,7 @@ class WaterHub:
         self._store: Store[dict[str, Any]] = Store(hass, STORE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._state: dict[str, dict[str, Any]] = {}
         self._unsubs: list[Callable[[], None]] = []
+        self._retry_unsub: Callable[[], None] | None = None
         self.device_id: str | None = None
 
     # ------------------------------------------------------------------ setup
@@ -277,6 +279,9 @@ class WaterHub:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if self._retry_unsub is not None:
+            self._retry_unsub()
+            self._retry_unsub = None
         self.queue.clear()
         for tap_id in list(self.runs):
             await self.async_finish(tap_id, RESULT_STOPPED)
@@ -380,14 +385,25 @@ class WaterHub:
     async def _refresh_rain_cb(self, _now: datetime) -> None:
         await self.async_refresh_rain()
 
+    async def _retry_rain(self, _now: datetime) -> None:
+        self._retry_unsub = None
+        await self.async_refresh_rain()
+
     async def async_refresh_rain(self) -> None:
         now = dt_util.utcnow()
         session = async_get_clientsession(self.hass)
         try:
             past = await fetch_open_meteo(session, self.hass.config.latitude, self.hass.config.longitude)
         except Exception as err:  # noqa: BLE001 - network errors of every kind
-            _LOGGER.warning("Open-Meteo rain data unavailable: %s", err)
-            self.rain_error = f"Open-Meteo: {err}"
+            # A timeout's message is empty, so name the error type too.
+            reason = f"{type(err).__name__}: {err}".rstrip(": ")
+            _LOGGER.warning(
+                "Open-Meteo rain data unavailable (%s); retrying in %s s", reason, RAIN_RETRY_SECONDS
+            )
+            self.rain_error = f"Open-Meteo: {reason}"
+            # Soon after startup the network is often not ready; do not wait 30 min.
+            if self._retry_unsub is None:
+                self._retry_unsub = async_call_later(self.hass, RAIN_RETRY_SECONDS, self._retry_rain)
             self.notify()
             return
         self._hours = past

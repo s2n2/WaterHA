@@ -231,15 +231,16 @@ class LastRunSensor(TapEntity, SensorEntity):
 class LastWaterSensor(TapEntity, SensorEntity):
     """Water given by the current or last run: litres with a flow sensor, else minutes."""
 
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 1
 
     def __init__(self, hub: WaterHub, tap_id: str) -> None:
         super().__init__(hub, tap_id, "last_water")
         if self.cfg.get(CONF_FLOW_SENSOR):
+            # Volume sensors may only be totals; this is a per-run figure, so no state class.
             self._attr_device_class = SensorDeviceClass.VOLUME
             self._attr_native_unit_of_measurement = UnitOfVolume.LITERS
         else:
+            self._attr_state_class = SensorStateClass.MEASUREMENT
             self._attr_device_class = SensorDeviceClass.DURATION
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
 

@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 
 const BAND = {
   cool: ["Cool", "mdi:snowflake"],
