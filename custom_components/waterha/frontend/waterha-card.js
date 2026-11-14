@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.7.1";
+const VERSION = "0.7.2";
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const WHEN = { always: "Every day", warm_hot: "Warm & hot days", hot: "Hot days only" };

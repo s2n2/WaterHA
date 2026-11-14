@@ -173,7 +173,8 @@ Assistant, refreshed every 30 minutes and before a scheduled run if older than t
 When Open-Meteo cannot be reached, WaterHA uses Home Assistant's own data instead (the
 card's source line says "Backup: …"): the hourly forecast of a weather entity for the next
 24 h and its daily forecast for today's high, and the recorded history of a rain-rate sensor
-for the past 24 h. Open-Meteo is tried again at every refresh and takes over when it is back.
+for the past 24 h. While Open-Meteo is failing it is retried after 2, 4, 8 … minutes (at most
+every 30), so a startup hiccup clears within minutes, and it takes over as soon as it answers.
 
 With no rain data at all at a scheduled time, the tap waters in full; with no temperature,
 it uses the warm-day amount. The card always loads, showing "–" until data arrives.

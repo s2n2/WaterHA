@@ -281,6 +281,7 @@ class WaterHub:
         self._state: dict[str, dict[str, Any]] = {}
         self._unsubs: list[Callable[[], None]] = []
         self._retry_unsub: Callable[[], None] | None = None
+        self._retry_delay = RAIN_RETRY_SECONDS
         self._open_meteo_ok = True
         self._temp_high_backup: float | None = None
         self.log: list[dict[str, Any]] = []
@@ -733,6 +734,15 @@ class WaterHub:
         self._retry_unsub = None
         await self.async_refresh_rain()
 
+    def _schedule_retry(self) -> int:
+        """Schedule the next Open-Meteo attempt (if none is pending); return its delay in s."""
+        if self._retry_unsub is not None:
+            return self._retry_delay
+        delay = self._retry_delay
+        self._retry_unsub = async_call_later(self.hass, delay, self._retry_rain)
+        self._retry_delay = min(delay * 2, RAIN_REFRESH_MINUTES * 60)
+        return delay
+
     async def async_refresh_rain(self) -> None:
         now = dt_util.utcnow()
         session = async_get_clientsession(self.hass)
@@ -743,21 +753,25 @@ class WaterHub:
             reason = f"{type(err).__name__}: {err}".rstrip(": ")
             log = _LOGGER.warning if self._open_meteo_ok else _LOGGER.debug
             self._open_meteo_ok = False
+            # Try Open-Meteo again soon, backing off 2, 4, 8 … up to 30 min: after a
+            # restart the network or the weather entities are often not ready yet.
+            delay = self._schedule_retry()
             if await self._refresh_from_backup(now, reason):
-                log("Open-Meteo unavailable (%s); using %s", reason, self.rain.source)
+                log("Open-Meteo unavailable (%s); using %s; retrying in %s s",
+                    reason, self.rain.source, delay)
                 self.notify()
                 return
-            log("Open-Meteo unavailable (%s) and no backup rain source; retrying in %s s",
-                reason, RAIN_RETRY_SECONDS)
+            log("Open-Meteo unavailable (%s) and no backup rain source; retrying in %s s", reason, delay)
             self.rain_error = f"Open-Meteo: {reason}; no backup rain source"
-            # Nothing at all yet (e.g. network not up at startup): try again soon.
-            if self.rain is None and self._retry_unsub is None:
-                self._retry_unsub = async_call_later(self.hass, RAIN_RETRY_SECONDS, self._retry_rain)
             self.notify()
             return
         if not self._open_meteo_ok:
             _LOGGER.info("Open-Meteo rain data is back")
         self._open_meteo_ok = True
+        self._retry_delay = RAIN_RETRY_SECONDS
+        if self._retry_unsub is not None:
+            self._retry_unsub()
+            self._retry_unsub = None
         self._temp_high_backup = None
         self._hours = past
         future: list[RainHour] = past
