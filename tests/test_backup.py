@@ -125,4 +125,5 @@ async def test_open_meteo_back_replaces_backup(hass: HomeAssistant, setup, aiocl
     await hass.async_block_till_done()
     window = hass.states.get("sensor.garden_watering_rain_past_and_next_24_h")
     assert window.attributes["source"] == "Open-Meteo" and window.attributes["error"] is None
-    assert hass.states.get("sensor.garden_watering_day_type").state == "cool"
+    # The high seen earlier today (26 from the backup) is kept for the rest of the day.
+    assert hass.states.get("sensor.garden_watering_day_type").state == "hot"

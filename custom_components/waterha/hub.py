@@ -317,6 +317,7 @@ class WaterHub:
         self.total_litres = float(stored.get("total_litres", 0.0))
         # Savings are counted from the first day WaterHA tracked usage.
         self.tracking_since = stored.get("tracking_since") or dt_util.now().date().isoformat()
+        self._day_high = stored.get("day_high") or {}
         self._prune_log()
         active = stored.get("active", {})
         # Set up while HA is starting = a restart: close every tap once their
@@ -426,6 +427,7 @@ class WaterHub:
             "daily": self.daily,
             "total_litres": round(self.total_litres, 1),
             "tracking_since": self.tracking_since,
+            "day_high": self._day_high,
         }
 
     # ------------------------------------------------------------------- log
@@ -660,12 +662,31 @@ class WaterHub:
     def hot_from(self) -> float:
         return float(self.entry.options.get(CONF_HOT_FROM, DEFAULT_HOT_FROM))
 
-    def temp_max_today(self) -> float | None:
-        """Today's forecast high: the backup's daily high when on backup, else the hourly max."""
+    def _live_high(self) -> float | None:
+        """The high the current data gives for today (backup daily high, or hourly max)."""
         if self._temp_high_backup is not None:
             return self._temp_high_backup
         tz = dt_util.get_default_time_zone()
         return day_max_temp(self._hours, dt_util.now().date(), tz)
+
+    def temp_max_today(self) -> float | None:
+        """Today's forecast high: the highest seen today.
+
+        Forecasts for "today" shrink as the day goes on (some only cover the hours
+        left, so by evening their "high" is the current temperature); the day's
+        high must not fall with them.
+        """
+        live = self._live_high()
+        today = dt_util.now().date().isoformat()
+        kept = self._day_high.get("high") if self._day_high.get("date") == today else None
+        values = [v for v in (live, kept) if v is not None]
+        return max(values) if values else None
+
+    def _remember_high(self) -> None:
+        high = self.temp_max_today()
+        if high is not None:
+            self._day_high = {"date": dt_util.now().date().isoformat(), "high": high}
+            self._save()
 
     @property
     def et_cool_below(self) -> float:
@@ -752,6 +773,7 @@ class WaterHub:
                 self.rain_error = f"{weather}: {err}; using Open-Meteo forecast"
         self.rain = summarise(now, past, future, RAIN_WINDOW_HOURS, source)
         self.rain_updated = now
+        self._remember_high()
         self.notify()
 
     async def _weather_forecast(self, entity_id: str | None, kind: str = "hourly") -> list[RainHour]:
@@ -813,8 +835,11 @@ class WaterHub:
                 _LOGGER.debug("Backup forecast from %s unavailable: %s", entity_id, err)
                 continue
             forecast_from = entity_id
-            high = await self._daily_high(entity_id)
             break
+        # Today's high: the highest any backup weather entity gives (one may only
+        # cover the hours left today).
+        highs = [h for e in self.backup_weather() if (h := await self._daily_high(e)) is not None]
+        high = max(highs) if highs else None
         past: list[RainHour] = []
         sensor = self.past_rain_sensor()
         if sensor:
@@ -836,6 +861,7 @@ class WaterHub:
         self._temp_high_backup = high
         self.rain = summarise(now, past, future, RAIN_WINDOW_HOURS, "Backup: " + ", ".join(parts))
         self.rain_updated = now
+        self._remember_high()
         missing = [] if past else ["past 24 h"]
         if not forecast_from:
             missing.append("forecast")
