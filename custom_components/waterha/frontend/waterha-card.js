@@ -1,4 +1,4 @@
-/* WaterHA cards (main + history): rain either side of now, and every tap with its controls.
+/* WaterHA cards (main, history, cost): rain either side of now, and every tap with its controls.
  *
  *   type: custom:waterha-card
  *   title: Garden            # optional
@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 const BAND = {
   cool: ["Cool", "mdi:snowflake"],
@@ -637,5 +637,192 @@ if (!customElements.get("waterha-history-card")) {
     type: "waterha-history-card",
     name: "WaterHA history",
     description: "What watered and when: a 24 h timeline and a log.",
+  });
+}
+
+
+/* WaterHA cost card: what watering costs.
+ *
+ *   type: custom:waterha-cost-card
+ *   title: Water cost   # optional
+ *   days: 30            # chart window (max 31), optional
+ */
+const TAP_COLORS = ["#039be5", "#43a047", "#fb8c00", "#8e24aa", "#e53935", "#00897b", "#6d4c41", "#3949ab"];
+
+class WaterHACostCard extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    this._sig = null;
+    this._editPrice = false;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      this.shadowRoot.addEventListener("click", (ev) => {
+        if (ev.composedPath().some((n) => n.dataset?.price)) {
+          this._editPrice = !this._editPrice;
+          this._render(this._costState(), true);
+          if (this._editPrice) this.shadowRoot.querySelector("input")?.focus();
+        }
+      });
+      this.shadowRoot.addEventListener("change", (ev) => {
+        const v = parseFloat(ev.target.value);
+        const id = this._priceEntity();
+        if (!isNaN(v) && v >= 0 && id) this._hass.callService("number", "set_value", { entity_id: id, value: v });
+        this._editPrice = false;
+      });
+      this.shadowRoot.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") ev.target.blur?.();
+        if (ev.key === "Escape") { this._editPrice = false; this._render(this._costState(), true); }
+      });
+    }
+  }
+
+  static getStubConfig() {
+    return { title: "Water cost" };
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const s = this._costState();
+    const sig = `${s?.last_updated}|${s?.state}`;
+    if (sig === this._sig) return;
+    this._sig = sig;
+    if (this.shadowRoot.activeElement?.tagName === "INPUT") return; // never redraw under typing
+    this._render(s);
+  }
+
+  _costState() {
+    const states = this._hass.states;
+    if (this._config.entity) return states[this._config.entity];
+    return Object.values(states).find((s) => s.attributes && s.attributes.waterha === "cost");
+  }
+
+  _priceEntity() {
+    const reg = this._hass.entities || {};
+    return Object.keys(this._hass.states).find((id) => id.startsWith("number.") && id.endsWith("_water_price")
+      && (!reg[id] || reg[id].platform === "waterha"));
+  }
+
+  _money(v) {
+    const cur = this._costState()?.attributes?.currency || "NZD";
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, minimumFractionDigits: 2 }).format(v || 0);
+    } catch (e) {
+      return `$${(v || 0).toFixed(2)}`;
+    }
+  }
+
+  _litres(v) {
+    v = v || 0;
+    return v >= 10000 ? `${(v / 1000).toFixed(1)} m³` : `${Math.round(v).toLocaleString()} L`;
+  }
+
+  _render(s) {
+    const title = this._config.title ?? "Water cost";
+    if (!s) {
+      this.shadowRoot.innerHTML = `${CSTYLE}<ha-card header="${esc(title)}"><div class="empty">
+        No WaterHA cost data found. Update WaterHA to 0.5 or later.</div></ha-card>`;
+      return;
+    }
+    const a = s.attributes;
+    const tiles = [
+      ["Today", a.today],
+      ["Last 7 days", a.week],
+      ["This month", a.month],
+      ["Month (projected)", a.projected_month],
+    ].map(([label, t]) => `<div class="tile"><span>${label}</span><b>${this._money(t?.cost)}</b><em>${this._litres(t?.litres)}</em></div>`).join("");
+    const tapNames = [...new Set((a.per_tap_30d || []).map((t) => t.name))];
+    const color = (name) => TAP_COLORS[Math.max(0, tapNames.indexOf(name)) % TAP_COLORS.length];
+    const perTap = (a.per_tap_30d || []).map((t) => {
+      const share = a.days30?.litres ? (100 * t.litres) / a.days30.litres : 0;
+      return `<div class="tap"><span class="sw" style="background:${color(t.name)}"></span><span class="n">${esc(t.name)}</span>
+        <span class="bar"><span style="width:${share.toFixed(0)}%;background:${color(t.name)}"></span></span>
+        <span class="l">${this._litres(t.litres)}</span><span class="c">${this._money(t.cost)}</span></div>`;
+    }).join("");
+    const price = this._editPrice
+      ? `<span class="pedit">${esc(a.currency || "")} <input type="number" inputmode="decimal" step="0.01" min="0" placeholder="${esc(a.price)}" aria-label="Price per 1000 litres"/> per 1000 L</span>`
+      : `<button class="price" data-price="1" title="Change the water price">${this._money(a.price)} per 1000 L</button>`;
+    const notes = [];
+    if (a.since) notes.push(`Measured since ${new Date(a.since).toLocaleDateString([], { day: "numeric", month: "short" })}`);
+    if ((a.not_measured || []).length) notes.push(`Not counted (no flow sensor): ${a.not_measured.join(", ")}`);
+    this.shadowRoot.innerHTML = `${CSTYLE}
+      <ha-card>
+        <div class="head"><div class="title">${esc(title)}</div>${price}</div>
+        <div class="tiles">${tiles}</div>
+        ${this._chart(a.series || [], color)}
+        ${perTap ? `<div class="sub">Last 30 days by tap · ${this._litres(a.days30?.litres)} · ${this._money(a.days30?.cost)}</div><div class="taps">${perTap}</div>` : `<div class="empty">No measured watering yet. Costs appear after the first run of a tap with a flow sensor.</div>`}
+        ${notes.length ? `<div class="note">${esc(notes.join(" · "))}</div>` : ""}
+      </ha-card>`;
+  }
+
+  _chart(series, color) {
+    const days = Math.min(this._config.days || 30, series.length);
+    const data = series.slice(-days);
+    if (!data.length) return "";
+    const W = 480, H = 96, pad = 14;
+    const max = Math.max(0.01, ...data.map((d) => d.cost));
+    const price = this._costState().attributes.price || 0;
+    const bw = W / data.length;
+    const bars = data.map((d, i) => {
+      let y = H;
+      const parts = Object.entries(d.taps || {}).map(([name, litres]) => {
+        const c = (litres * price) / 1000;
+        const h = (c / max) * (H - pad);
+        y -= h;
+        return `<rect x="${(i * bw + 1).toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, bw - 2).toFixed(1)}" height="${h.toFixed(1)}" fill="${color(name)}"/>`;
+      }).join("");
+      const day = new Date(d.date + "T12:00:00");
+      const label = day.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+      return `<g><title>${esc(label)}: ${this._money(d.cost)} · ${this._litres(d.litres)}</title>
+        <rect x="${i * bw}" y="0" width="${bw}" height="${H}" fill="transparent"/>${parts}</g>`;
+    }).join("");
+    const first = new Date(data[0].date + "T12:00:00").toLocaleDateString([], { day: "numeric", month: "short" });
+    return `<svg class="chart" viewBox="0 0 ${W} ${H + 12}" preserveAspectRatio="none" role="img" aria-label="Daily water cost">
+      <line x1="0" x2="${W}" y1="${H}" y2="${H}" class="axis"/>${bars}
+      <text x="0" y="${H + 11}" class="lbl">${esc(first)}</text><text x="${W}" y="${H + 11}" class="lbl" text-anchor="end">today</text>
+      <text x="${W}" y="9" class="lbl" text-anchor="end">max ${esc(this._money(max))}/day</text>
+    </svg>`;
+  }
+}
+
+const CSTYLE = `<style>
+  ha-card { padding: 12px 16px 10px; container-type: inline-size; }
+  .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .title { font-size: 1.25em; font-weight: 500; flex: 1; }
+  .price { font: inherit; font-size: 0.85em; color: var(--primary-color); background: none; border: 0; cursor: pointer; padding: 0; }
+  .pedit { font-size: 0.85em; color: var(--secondary-text-color); }
+  .pedit input { width: 70px; font: inherit; padding: 2px 6px; border-radius: 12px; border: 1px solid var(--divider-color);
+    background: var(--card-background-color, transparent); color: var(--primary-text-color); }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 6px; }
+  @container (max-width: 420px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .tile { display: flex; flex-direction: column; }
+  .tile span { font-size: 0.8em; color: var(--secondary-text-color); }
+  .tile b { font-size: 1.3em; font-weight: 500; }
+  .tile em { font-style: normal; font-size: 0.8em; color: var(--secondary-text-color); }
+  .chart { width: 100%; height: 108px; display: block; margin: 4px 0; }
+  .chart .axis { stroke: var(--divider-color); }
+  .chart .lbl { font-size: 9px; fill: var(--secondary-text-color); }
+  .sub { font-size: 0.8em; color: var(--secondary-text-color); margin: 8px 0 4px; }
+  .tap { display: grid; grid-template-columns: 10px minmax(70px, auto) 1fr auto auto; gap: 8px; align-items: center;
+         padding: 3px 0; font-size: 0.9em; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; }
+  .bar { height: 6px; background: var(--divider-color); border-radius: 3px; overflow: hidden; }
+  .bar span { display: block; height: 100%; }
+  .l { color: var(--secondary-text-color); white-space: nowrap; }
+  .c { font-weight: 500; white-space: nowrap; }
+  .note { font-size: 0.75em; color: var(--secondary-text-color); margin-top: 8px; }
+  .empty { padding: 12px 0; color: var(--secondary-text-color); }
+</style>`;
+
+if (!customElements.get("waterha-cost-card")) {
+  customElements.define("waterha-cost-card", WaterHACostCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "waterha-cost-card",
+    name: "WaterHA cost",
+    description: "What watering costs: today, week, month, a 30-day chart and per tap.",
   });
 }

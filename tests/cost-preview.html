@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WaterHA cost preview</title>
+<style>
+  body { font-family: Roboto, system-ui, sans-serif; font-size: 14px; background: #f5f5f5; margin: 0; padding: 16px;
+         --primary-color: #039be5; --secondary-text-color: #727272; --primary-text-color: #212121;
+         --divider-color: #e0e0e0; --card-background-color: #fff; }
+  waterha-cost-card { display: block; width: 620px; max-width: 100%; }
+</style>
+</head>
+<body>
+<waterha-cost-card id="card"></waterha-cost-card>
+<pre id="log"></pre>
+<script>
+customElements.define("ha-card", class extends HTMLElement {
+  connectedCallback() { this.style.cssText = "display:block;background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.15)"; }
+});
+</script>
+<script src="../custom_components/waterha/frontend/waterha-card.js"></script>
+<script>
+// Fake usage: vege daily ~140 L, lawn Mon/Wed/Fri ~1000 L, the last 14 days.
+const price = 1.48;
+const series = [];
+for (let i = 30; i >= 0; i--) {
+  const d = new Date(Date.now() - i * 86400000);
+  const taps = {};
+  if (i <= 14) {
+    taps["Front garden"] = 120 + (i % 3) * 25;
+    if ([1, 3, 5].includes(d.getDay())) taps["Lawn"] = 900 + (i % 4) * 120;
+  }
+  const litres = Object.values(taps).reduce((a, b) => a + b, 0);
+  series.push({ date: d.toISOString().slice(0, 10), litres, cost: +(litres * price / 1000).toFixed(2), taps });
+}
+const sum = (n) => series.slice(-n).reduce((a, d) => a + d.litres, 0);
+const m = (l) => ({ litres: l, cost: +(l * price / 1000).toFixed(2) });
+const attrs = {
+  waterha: "cost", currency: "NZD", price, series,
+  today: m(sum(1)), week: m(sum(7)), days30: m(sum(30)), month: m(sum(14)), projected_month: m(sum(14) / 14 * 30),
+  per_tap_30d: [{ name: "Lawn", ...m(6600) }, { name: "Front garden", ...m(2050) }],
+  since: series[16].date, not_measured: ["Back Garden"],
+};
+window.calls = [];
+const card = document.getElementById("card");
+card.setConfig({});
+card.hass = {
+  states: { "sensor.cost": { entity_id: "sensor.cost", state: String(attrs.today.cost), last_updated: "1", attributes: attrs },
+            "number.garden_watering_water_price": { state: "1.48", attributes: {} } },
+  entities: {},
+  callService: (d, s, data) => { window.calls.push([d, s, data]); document.getElementById("log").textContent = JSON.stringify(window.calls); },
+};
+</script>
+</body>
+</html>

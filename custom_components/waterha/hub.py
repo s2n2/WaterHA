@@ -51,6 +51,7 @@ from .const import (
     CONF_SEQUENTIAL,
     CONF_START_TIME,
     CONF_TAP_ENTITY,
+    CONF_WATER_PRICE,
     CONF_WEATHER_ENTITY,
     DAYS,
     DEFAULT_BAND_AMOUNTS,
@@ -58,6 +59,7 @@ from .const import (
     DEFAULT_HOT_FROM,
     DEFAULT_MAX_MINUTES,
     DEFAULT_SLOT_TIMES,
+    DEFAULT_WATER_PRICE,
     DOMAIN,
     FLOW_TICK_SECONDS,
     LOG_DAYS,
@@ -87,6 +89,7 @@ from .const import (
     STATUS_RAIN_HOLD,
     STATUS_WATERING,
     SUBENTRY_TAP,
+    USAGE_DAYS,
     amount_key,
 )
 from .rain import (
@@ -245,6 +248,9 @@ class WaterHub:
         self._temp_high_backup: float | None = None
         self.log: list[dict[str, Any]] = []
         self._pending_factor: dict[str, float] = {}
+        # {local date: {tap_id: litres}} and the all-time total, for usage and cost.
+        self.daily: dict[str, dict[str, float]] = {}
+        self.total_litres = 0.0
         self.device_id: str | None = None
 
     # ------------------------------------------------------------------ setup
@@ -270,6 +276,8 @@ class WaterHub:
         stored = await self._store.async_load() or {}
         self._state = stored.get("taps", {})
         self.log = stored.get("log", [])
+        self.daily = stored.get("daily", {})
+        self.total_litres = float(stored.get("total_litres", 0.0))
         self._prune_log()
         active = stored.get("active", {})
         # Set up while HA is starting = a restart: close every tap once their
@@ -375,6 +383,8 @@ class WaterHub:
             "taps": self._state,
             "active": {tap_id: run.as_dict() for tap_id, run in self.runs.items()},
             "log": self.log,
+            "daily": self.daily,
+            "total_litres": round(self.total_litres, 1),
         }
 
     # ------------------------------------------------------------------- log
@@ -385,6 +395,83 @@ class WaterHub:
     def _log(self, item: dict[str, Any]) -> None:
         self.log.append(item)
         self._prune_log()
+
+    # ----------------------------------------------------------- usage/cost
+    @property
+    def water_price(self) -> float:
+        """Price per 1000 L (= per m³)."""
+        return float(self.entry.options.get(CONF_WATER_PRICE, DEFAULT_WATER_PRICE))
+
+    def _add_usage(self, tap_id: str, litres: float, when: datetime) -> None:
+        if litres <= 0:
+            return
+        day = dt_util.as_local(when).date().isoformat()
+        taps = self.daily.setdefault(day, {})
+        taps[tap_id] = round(taps.get(tap_id, 0.0) + litres, 1)
+        self.total_litres += litres
+        cutoff = (dt_util.now().date() - timedelta(days=USAGE_DAYS)).isoformat()
+        for old in [d for d in self.daily if d < cutoff]:
+            del self.daily[old]
+
+    def live_litres(self) -> dict[str, float]:
+        """Litres so far of runs in progress (flow-measured taps only)."""
+        return {tap_id: run.litres for tap_id, run in self.runs.items() if run.flow and run.litres > 0}
+
+    def total_with_live(self) -> float:
+        return round(self.total_litres + sum(self.live_litres().values()), 1)
+
+    def usage_view(self, days: int = 31) -> dict[str, Any]:
+        """Daily litres and cost (oldest first) plus totals, for the cost card."""
+        price = self.water_price
+        today = dt_util.now().date()
+        names = {tap_id: sub.data.get(CONF_NAME) for tap_id, sub in self.taps.items()}
+        live = self.live_litres()
+        series = []
+        for offset in range(days - 1, -1, -1):
+            day = (today - timedelta(days=offset)).isoformat()
+            taps = dict(self.daily.get(day, {}))
+            if offset == 0:
+                for tap_id, litres in live.items():
+                    taps[tap_id] = round(taps.get(tap_id, 0.0) + litres, 1)
+            litres = round(sum(taps.values()), 1)
+            series.append({
+                "date": day,
+                "litres": litres,
+                "cost": round(litres * price / 1000, 2),
+                "taps": {names.get(t, t): v for t, v in taps.items()},
+            })
+
+        def total(n: int) -> float:
+            return round(sum(d["litres"] for d in series[-n:]), 1)
+
+        month = [d for d in series if d["date"][:7] == today.isoformat()[:7]]
+        month_litres = round(sum(d["litres"] for d in month), 1)
+        days_in_month = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        projected = month_litres / len(month) * days_in_month.day if month else 0.0
+        per_tap: dict[str, float] = {}
+        for d in series[-30:]:
+            for name, litres in d["taps"].items():
+                per_tap[name] = round(per_tap.get(name, 0.0) + litres, 1)
+
+        def money(litres: float) -> float:
+            return round(litres * price / 1000, 2)
+
+        no_flow = [sub.data.get(CONF_NAME) for sub in self.taps.values() if not sub.data.get(CONF_FLOW_SENSOR)]
+        return {
+            "price": price,
+            "series": series,
+            "today": {"litres": total(1), "cost": money(total(1))},
+            "week": {"litres": total(7), "cost": money(total(7))},
+            "days30": {"litres": total(30), "cost": money(total(30))},
+            "month": {"litres": month_litres, "cost": money(month_litres)},
+            "projected_month": {"litres": round(projected, 1), "cost": money(projected)},
+            "per_tap_30d": [
+                {"name": name, "litres": litres, "cost": money(litres)}
+                for name, litres in sorted(per_tap.items(), key=lambda kv: -kv[1])
+            ],
+            "since": min(self.daily) if self.daily else None,
+            "not_measured": no_flow,
+        }
 
     def log_view(self) -> list[dict[str, Any]]:
         """The log newest first, with runs in progress (end None) on top."""
@@ -947,6 +1034,8 @@ class WaterHub:
             last_minutes=round((end - run.started).total_seconds() / 60, 1),
             last_litres=round(run.litres, 1) if run.flow else None,
         )
+        if run.flow:
+            self._add_usage(tap_id, run.litres, run.started)
         self._log({
             "tap": tap_id,
             "name": run.name,

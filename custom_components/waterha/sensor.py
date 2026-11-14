@@ -73,6 +73,8 @@ async def async_setup_entry(
             TempTodaySensor(hub),
             DayTypeSensor(hub),
             WateringLogSensor(hub),
+            WaterUsedSensor(hub),
+            WaterCostSensor(hub),
         ],
         lambda hub, tap_id: [
             TapStatusSensor(hub, tap_id),
@@ -208,6 +210,47 @@ class WateringLogSensor(WaterEntity, SensorEntity):
             "litres_24h": round(sum(litres), 1) if litres else None,
             "runs": self.hub.log_view()[:LOG_SHOWN],
         }
+
+
+class WaterUsedSensor(WaterEntity, SensorEntity):
+    """All water WaterHA has measured (flow-sensor taps), for the Energy dashboard."""
+
+    _attr_device_class = SensorDeviceClass.WATER
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfVolume.LITERS
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "water_used")
+
+    @property
+    def native_value(self) -> float:
+        return self.hub.total_with_live()
+
+
+class WaterCostSensor(WaterEntity, SensorEntity):
+    """What today's watering cost; daily usage and cost totals are attributes for the cost card."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+    _unrecorded_attributes = frozenset(
+        {"series", "per_tap_30d", "week", "days30", "month", "projected_month", "today", "not_measured"}
+    )
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, "water_cost_today")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return self.hass.config.currency
+
+    @property
+    def native_value(self) -> float:
+        return self.hub.usage_view(1)["today"]["cost"]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"waterha": "cost", "currency": self.hass.config.currency, **self.hub.usage_view()}
 
 
 class TapStatusSensor(TapEntity, SensorEntity):

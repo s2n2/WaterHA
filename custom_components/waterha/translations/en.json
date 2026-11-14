@@ -10,14 +10,16 @@
           "cool_below": "Cool day below",
           "hot_from": "Hot day from",
           "backup_weather": "Backup forecast (weather entities)",
-          "past_rain_sensor": "Backup past rain (rain-rate sensor)"
+          "past_rain_sensor": "Backup past rain (rain-rate sensor)",
+          "water_price": "Water price"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
           "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
           "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
           "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
-          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found."
+          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
+          "water_price": "What you pay per 1000 L (per m³), for the cost card."
         }
       }
     },
@@ -39,14 +41,16 @@
           "cool_below": "Cool day below",
           "hot_from": "Hot day from",
           "backup_weather": "Backup forecast (weather entities)",
-          "past_rain_sensor": "Backup past rain (rain-rate sensor)"
+          "past_rain_sensor": "Backup past rain (rain-rate sensor)",
+          "water_price": "Water price"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
           "cool_below": "Today's forecast high below this is a cool day (default 16 °C).",
           "hot_from": "Today's forecast high at or above this is a hot day (default 23 °C). In between is a warm day.",
           "backup_weather": "Used when Open-Meteo is unreachable: the first that gives an hourly forecast supplies the next 24 h and today's high. Empty = every weather entity with an hourly forecast.",
-          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found."
+          "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
+          "water_price": "What you pay per 1000 L (per m³), for the cost card."
         }
       }
     },
@@ -202,6 +206,12 @@
       "watering_log": {
         "name": "Watering log",
         "unit_of_measurement": "runs"
+      },
+      "water_used": {
+        "name": "Water used"
+      },
+      "water_cost_today": {
+        "name": "Water cost today"
       }
     },
     "switch": {
@@ -239,6 +249,9 @@
       },
       "hot_from": {
         "name": "Hot day from"
+      },
+      "water_price": {
+        "name": "Water price"
       }
     },
     "time": {

@@ -37,6 +37,7 @@ from .const import (
     CONF_START_TIME,
     CONF_START_TIME_2,
     CONF_TAP_ENTITY,
+    CONF_WATER_PRICE,
     CONF_WEATHER_ENTITY,
     DAYS,
     DEFAULT_BAND_AMOUNTS,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_RAIN_THRESHOLD,
     DEFAULT_START_TIME,
     DEFAULT_START_TIME_2,
+    DEFAULT_WATER_PRICE,
     DOMAIN,
     MODE_LITRES,
     MODE_MINUTES,
@@ -85,6 +87,14 @@ def _hub_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_COOL_BELOW, default=defaults.get(CONF_COOL_BELOW, DEFAULT_COOL_BELOW)
             ): TEMP,
             vol.Required(CONF_HOT_FROM, default=defaults.get(CONF_HOT_FROM, DEFAULT_HOT_FROM)): TEMP,
+            vol.Required(
+                CONF_WATER_PRICE, default=defaults.get(CONF_WATER_PRICE, DEFAULT_WATER_PRICE)
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=100, step=0.01, unit_of_measurement="per 1000 L",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
             vol.Optional(
                 CONF_BACKUP_WEATHER,
                 description={"suggested_value": defaults.get(CONF_BACKUP_WEATHER)},
@@ -113,6 +123,8 @@ def _hub_options(data: dict[str, Any]) -> dict[str, Any]:
     data = dict(data)
     data[CONF_COOL_BELOW] = float(data[CONF_COOL_BELOW])
     data[CONF_HOT_FROM] = float(data[CONF_HOT_FROM])
+    if CONF_WATER_PRICE in data:
+        data[CONF_WATER_PRICE] = float(data[CONF_WATER_PRICE])
     return data
 
 

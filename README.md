@@ -29,6 +29,7 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Rain forecast from | **Open-Meteo** (default, no account) or a **weather entity** with an hourly forecast. Past rain and temperature always come from Open-Meteo for your home location. |
 | Cool day below | Today's forecast high below this is a cool day. Default 16 °C. |
 | Hot day from | Today's forecast high at or above this is a hot day. Default 23 °C. In between is warm. |
+| Water price | What you pay per 1000 L, for the cost card. Default 1.48. |
 | Backup forecast | Weather entities used when Open-Meteo is unreachable: the first with an hourly forecast gives the next 24 h, and its daily forecast today's high. Empty = every weather entity with an hourly forecast. |
 | Backup past rain | A rain-rate sensor (mm/h) whose recorded history gives the past 24 h when Open-Meteo is unreachable, e.g. `sensor.pirateweather_precip_intensity`. Empty = the first current rain-rate sensor. |
 
@@ -100,6 +101,23 @@ early, red failed, pulsing while watering) and a green diamond for a rain skip. 
 log: when, which tap, minutes and litres, result, and whether it was a scheduled slot or
 manual, the day type and any rain reduction. WaterHA keeps 7 days of log in the
 `Watering log` sensor (its state is the number of runs in the last 24 h).
+
+### Cost card
+
+```yaml
+type: custom:waterha-cost-card
+title: Water cost   # optional
+days: 30            # chart window, optional
+```
+
+Today, the last 7 days, this month and the projected month (cost and litres), a daily
+cost chart split by tap, and each tap's share of the last 30 days. Tap the price to change
+it. WaterHA keeps litres per tap per day for 400 days from the taps' flow sensors; taps
+without a flow sensor are listed as not counted.
+
+Hub: `Water price` (per 1000 L, default 1.48, also in the hub options), `Water cost today`,
+and `Water used`, a running total in litres you can add to Home Assistant's **Energy**
+dashboard as a water source.
 
 ## Services
 

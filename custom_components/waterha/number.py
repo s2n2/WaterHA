@@ -21,6 +21,7 @@ from .const import (
     CONF_MAX_MINUTES,
     CONF_MODE,
     CONF_RAIN_THRESHOLD,
+    CONF_WATER_PRICE,
     DEFAULT_MAX_MINUTES,
     MODE_LITRES,
     amount_key,
@@ -37,7 +38,7 @@ async def async_setup_entry(
         hass,
         entry,
         async_add_entities,
-        [SplitNumber(hub, CONF_COOL_BELOW), SplitNumber(hub, CONF_HOT_FROM)],
+        [SplitNumber(hub, CONF_COOL_BELOW), SplitNumber(hub, CONF_HOT_FROM), PriceNumber(hub)],
         lambda hub, tap_id: [
             *(AmountNumber(hub, tap_id, band) for band in BANDS),
             TapNumber(hub, tap_id, CONF_RAIN_THRESHOLD),
@@ -123,3 +124,26 @@ class SplitNumber(WaterEntity, NumberEntity):
         if self._key == CONF_HOT_FROM and value <= self.hub.cool_below:
             await self.hub.async_set_hub_option(CONF_COOL_BELOW, value - 0.5)
         await self.hub.async_set_hub_option(self._key, value)
+
+
+class PriceNumber(WaterEntity, NumberEntity):
+    """What water costs per 1000 L (per m³), for the cost card."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 0.01
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, CONF_WATER_PRICE)
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return f"{self.hass.config.currency}/m³"
+
+    @property
+    def native_value(self) -> float:
+        return self.hub.water_price
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.hub.async_set_hub_option(CONF_WATER_PRICE, round(float(value), 4))
