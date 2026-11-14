@@ -58,7 +58,7 @@ title: Garden
 
 It shows the hourly rain for the 48 h window (past in grey, forecast in blue, stronger for
 higher probability), the totals, and each tap with Water now/Stop, Auto, amount and
-threshold steppers and its next run.
+threshold (tap the value for one-tap presets or type any number) and its next run.
 
 ## Services
 

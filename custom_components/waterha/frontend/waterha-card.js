@@ -6,7 +6,14 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
+
+// One-tap choices when editing a value; any other value can be typed.
+const PRESETS = {
+  min: [5, 10, 15, 20, 30, 45, 60],
+  L: [10, 20, 50, 100, 150, 200, 300],
+  mm: [0, 2, 5, 10, 15, 20, 30],
+};
 
 const STATUS = {
   idle: ["Idle", "var(--secondary-text-color)"],
@@ -28,6 +35,10 @@ const RESULT = {
 
 const esc = (v) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const fmt = (v) => {
+  const n = parseFloat(v);
+  return isNaN(n) ? "–" : String(Math.round(n * 10) / 10);
+};
 const mm = (v) => (v === null || v === undefined || isNaN(v) ? "–" : `${(+v).toFixed(1)} mm`);
 
 function when(iso) {
@@ -52,6 +63,14 @@ class WaterHACard extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (ev) => this._click(ev));
+      this.shadowRoot.addEventListener("change", (ev) => this._typed(ev));
+      this.shadowRoot.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape") this._closeEdit();
+        else if (ev.key === "Enter" && ev.target.dataset?.input) ev.target.blur();
+      });
+      this.shadowRoot.addEventListener("focusout", () => {
+        if (this._pending) setTimeout(() => this._flush(), 0);
+      });
     }
   }
 
@@ -76,7 +95,56 @@ class WaterHACard extends HTMLElement {
     if (sig === this._sig) return;
     this._sig = sig;
     this._taps = taps;
+    // Never redraw under someone typing a value; redraw when they leave the box.
+    if (this.shadowRoot.activeElement?.dataset?.input) {
+      this._pending = true;
+      return;
+    }
     this._render(rain, taps);
+  }
+
+  _flush() {
+    if (this.shadowRoot.activeElement?.dataset?.input) return;
+    this._pending = false;
+    this._render(this._rainState(), this._taps || []);
+  }
+
+  _closeEdit() {
+    if (!this._edit) return;
+    this._edit = null;
+    this._pending = false;
+    this._render(this._rainState(), this._taps || []);
+  }
+
+  _setNumber(entityId, raw) {
+    const s = this._hass.states[entityId];
+    const v = parseFloat(raw);
+    if (!s || isNaN(v)) return;
+    const a = s.attributes;
+    const value = Math.min(a.max ?? 9999, Math.max(a.min ?? 0, v));
+    this._edit = null;
+    this._hass.callService("number", "set_value", { entity_id: entityId, value });
+    this._render(this._rainState(), this._taps || []);
+  }
+
+  _editor(entityId, unit) {
+    const s = this._hass.states[entityId];
+    if (!s) return "";
+    const cur = parseFloat(s.state);
+    const a = s.attributes;
+    const chips = PRESETS[unit]
+      .filter((v) => v >= (a.min ?? 0) && v <= (a.max ?? 9999))
+      .map((v) => `<button class="chip${v === cur ? " on" : ""}" data-set="${esc(entityId)}" data-v="${v}">${unit === "mm" && v === 0 ? "Off" : v}</button>`)
+      .join("");
+    return `<div class="editor">
+      <span class="elabel">${unit === "mm" ? "Skip when rain (past + next 24 h) reaches" : "Water for"}</span>
+      <div class="chips">${chips}
+        <span class="custom"><input type="number" inputmode="decimal" data-input="${esc(entityId)}"
+          min="${a.min ?? 0}" max="${a.max ?? 9999}" step="${a.step ?? 1}" placeholder="${esc(fmt(s.state))}"
+          aria-label="Other value"/> ${unit}</span>
+        <button class="chip done" data-close="1" aria-label="Close">✕</button>
+      </div>
+    </div>`;
   }
 
   _rainState() {
@@ -177,26 +245,27 @@ class WaterHACard extends HTMLElement {
       ${progress}
       <div class="row ctl">
         <label class="sw"><input type="checkbox" data-toggle="${esc(t.automatic)}" ${auto ? "checked" : ""}/> Auto</label>
-        <span class="step">
-          <button data-num="${esc(t.amount)}" data-d="${unit === "L" ? -5 : -1}">−</button>
-          <span>${esc(amount)} ${unit}</span>
-          <button data-num="${esc(t.amount)}" data-d="${unit === "L" ? 5 : 1}">+</button>
-        </span>
-        <span class="step" title="Rain threshold (past + next 24 h)">
-          <ha-icon icon="mdi:weather-pouring"></ha-icon>
-          <button data-num="${esc(t.rain_threshold)}" data-d="-1">−</button>
-          <span>${esc(thr)} mm</span>
-          <button data-num="${esc(t.rain_threshold)}" data-d="1">+</button>
-        </span>
-        <button class="time" data-more="${esc(t.start_time)}">${esc((a.start_time || "").slice(0, 5))}</button>
+        <button class="val${this._edit === t.amount ? " open" : ""}" data-edit="${esc(t.amount)}" title="Amount">
+          <ha-icon icon="mdi:water-outline"></ha-icon>${esc(fmt(amount))} ${unit}</button>
+        <button class="val${this._edit === t.rain_threshold ? " open" : ""}" data-edit="${esc(t.rain_threshold)}" title="Rain threshold (past + next 24 h)">
+          <ha-icon icon="mdi:weather-pouring"></ha-icon>${thrNum > 0 ? `${esc(fmt(thr))} mm` : "off"}</button>
+        <button class="val" data-more="${esc(t.start_time)}" title="Start time">
+          <ha-icon icon="mdi:clock-outline"></ha-icon>${esc((a.start_time || "").slice(0, 5))}</button>
       </div>
+      ${this._edit === t.amount ? this._editor(t.amount, unit) : ""}
+      ${this._edit === t.rain_threshold ? this._editor(t.rain_threshold, "mm") : ""}
       <div class="sub">${auto && a.next_run ? `Next ${esc(when(a.next_run))}` : auto ? "No days selected" : "Automatic watering is off"} · ${esc(rainNote)}</div>
       <div class="sub">${last}</div>
     </div>`;
   }
 
+  _typed(ev) {
+    const id = ev.target?.dataset?.input;
+    if (id && ev.target.value !== "") this._setNumber(id, ev.target.value);
+  }
+
   _click(ev) {
-    const el = ev.composedPath().find((n) => n.dataset && (n.dataset.press || n.dataset.num || n.dataset.more || n.dataset.toggle || n.dataset.act));
+    const el = ev.composedPath().find((n) => n.dataset && (n.dataset.press || n.dataset.set || n.dataset.edit || n.dataset.close || n.dataset.more || n.dataset.toggle || n.dataset.act));
     if (!el || !this._hass) return;
     const d = el.dataset;
     if (d.press) this._hass.callService("button", "press", { entity_id: d.press });
@@ -205,12 +274,13 @@ class WaterHACard extends HTMLElement {
       ev.preventDefault();
       const on = this._hass.states[d.toggle]?.state === "on";
       this._hass.callService("switch", on ? "turn_off" : "turn_on", { entity_id: d.toggle });
-    } else if (d.num) {
-      const s = this._hass.states[d.num];
-      if (!s) return;
-      const a = s.attributes;
-      const v = Math.min(a.max ?? 9999, Math.max(a.min ?? 0, parseFloat(s.state) + parseFloat(d.d)));
-      this._hass.callService("number", "set_value", { entity_id: d.num, value: v });
+    } else if (d.set) {
+      this._setNumber(d.set, d.v);
+    } else if (d.edit) {
+      this._edit = this._edit === d.edit ? null : d.edit;
+      this._render(this._rainState(), this._taps || []);
+    } else if (d.close) {
+      this._closeEdit();
     } else if (d.more) {
       this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: d.more }, bubbles: true, composed: true }));
     }
@@ -249,9 +319,22 @@ const STYLE = `<style>
          background: var(--primary-color); color: var(--text-primary-color, #fff); --mdc-icon-size: 18px; }
   .act.stop { background: var(--error-color, #db4437); }
   .ctl { margin-top: 6px; gap: 12px; }
-  .step { display: inline-flex; align-items: center; gap: 4px; --mdc-icon-size: 18px; color: var(--primary-text-color); }
-  .step button { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--divider-color); line-height: 1; }
-  .time { border: 1px solid var(--divider-color); border-radius: 12px; padding: 2px 8px; }
+  .val { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 10px;
+         border: 1px solid var(--divider-color); border-radius: 16px; --mdc-icon-size: 18px; }
+  .val ha-icon { color: var(--secondary-text-color); }
+  .val.open { border-color: var(--primary-color); color: var(--primary-color); }
+  .editor { margin-top: 8px; padding: 8px; border-radius: 12px;
+            background: var(--secondary-background-color, rgba(127,127,127,.08)); }
+  .elabel { font-size: 0.8em; color: var(--secondary-text-color); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+  .chip { min-width: 40px; min-height: 34px; padding: 0 10px; border-radius: 17px;
+          border: 1px solid var(--divider-color); background: var(--card-background-color, transparent); }
+  .chip.on { background: var(--primary-color); color: var(--text-primary-color, #fff); border-color: var(--primary-color); }
+  .chip.done { min-width: 34px; color: var(--secondary-text-color); }
+  .custom { display: inline-flex; align-items: center; gap: 4px; color: var(--secondary-text-color); }
+  .custom input { width: 64px; min-height: 32px; padding: 0 8px; border-radius: 16px; font: inherit;
+                  border: 1px solid var(--divider-color); background: var(--card-background-color, transparent);
+                  color: var(--primary-text-color); }
   .sw { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   .sub { font-size: 0.8em; color: var(--secondary-text-color); margin-top: 3px; }
   .bar { height: 6px; background: var(--divider-color); border-radius: 3px; margin-top: 8px; overflow: hidden; }
