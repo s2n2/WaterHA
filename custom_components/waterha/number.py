@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
     BANDS,
+    CONF_BASELINE_MINUTES,
     CONF_COOL_BELOW,
     CONF_ET_COOL_BELOW,
     CONF_ET_HOT_FROM,
@@ -47,6 +48,7 @@ async def async_setup_entry(
             EtSplitNumber(hub, CONF_ET_COOL_BELOW),
             EtSplitNumber(hub, CONF_ET_HOT_FROM),
             PriceNumber(hub),
+            BaselineNumber(hub),
         ],
         lambda hub, tap_id: [
             *(AmountNumber(hub, tap_id, band) for band in BANDS),
@@ -206,3 +208,23 @@ class SlotShareNumber(TapEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         await self.hub.async_set_option(self.tap_id, self._key, int(value))
+
+
+class BaselineNumber(WaterEntity, NumberEntity):
+    """Minutes per tap per day the savings are compared against (default 30 = 15 min x 2)."""
+
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_native_min_value = 0
+    _attr_native_max_value = 240
+    _attr_native_step = 5
+
+    def __init__(self, hub: WaterHub) -> None:
+        super().__init__(hub, CONF_BASELINE_MINUTES)
+
+    @property
+    def native_value(self) -> float:
+        return self.hub.baseline_minutes
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self.hub.async_set_hub_option(CONF_BASELINE_MINUTES, float(value))

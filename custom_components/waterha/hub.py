@@ -37,6 +37,7 @@ from .const import (
     BAND_WARM,
     CONF_AMOUNT,
     CONF_BACKUP_WEATHER,
+    CONF_BASELINE_MINUTES,
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
@@ -57,6 +58,7 @@ from .const import (
     CONF_WEATHER_ENTITY,
     DAYS,
     DEFAULT_BAND_AMOUNTS,
+    DEFAULT_BASELINE_MINUTES,
     DEFAULT_COOL_BELOW,
     DEFAULT_ET_COOL_BELOW,
     DEFAULT_ET_HOT_FROM,
@@ -83,6 +85,7 @@ from .const import (
     RESULT_SKIPPED_RAIN,
     RESULT_STOPPED,
     RESULT_STOPPED_EXTERNALLY,
+    SAVINGS_DAYS,
     SIGNAL_UPDATE,
     SLOT_RULES,
     SLOTS,
@@ -196,6 +199,13 @@ def _scheduled_key(slot: int) -> str:
     return "last_scheduled" if slot == 1 else f"last_scheduled_{slot}"
 
 
+def _positive(value: Any) -> bool:
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def parse_time(value: str | None) -> time | None:
     if not value:
         return None
@@ -305,6 +315,8 @@ class WaterHub:
         self.log = stored.get("log", [])
         self.daily = stored.get("daily", {})
         self.total_litres = float(stored.get("total_litres", 0.0))
+        # Savings are counted from the first day WaterHA tracked usage.
+        self.tracking_since = stored.get("tracking_since") or dt_util.now().date().isoformat()
         self._prune_log()
         active = stored.get("active", {})
         # Set up while HA is starting = a restart: close every tap once their
@@ -333,6 +345,7 @@ class WaterHub:
             self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._on_ha_stop)
         )
         self.hass.async_create_background_task(self.async_refresh_rain(), f"{DOMAIN} rain")
+        self._unsubs.append(async_at_started(self.hass, self._seed_flows))
 
     async def async_stop(self) -> None:
         """Unload: close any open tap so a reload never leaves water running."""
@@ -412,6 +425,7 @@ class WaterHub:
             "log": self.log,
             "daily": self.daily,
             "total_litres": round(self.total_litres, 1),
+            "tracking_since": self.tracking_since,
         }
 
     # ------------------------------------------------------------------- log
@@ -439,6 +453,97 @@ class WaterHub:
         cutoff = (dt_util.now().date() - timedelta(days=USAGE_DAYS)).isoformat()
         for old in [d for d in self.daily if d < cutoff]:
             del self.daily[old]
+
+    # ------------------------------------------------------------- savings
+    @property
+    def baseline_minutes(self) -> float:
+        """Minutes per tap per day the savings are compared against."""
+        return float(self.entry.options.get(CONF_BASELINE_MINUTES, DEFAULT_BASELINE_MINUTES))
+
+    def flow_lpm(self, tap_id: str) -> float | None:
+        """A tap's typical flow (L/min): from its recorded history, refined by each run."""
+        value = self.tap_state(tap_id).get("flow_lpm")
+        return float(value) if value else None
+
+    def _learn_flow(self, tap_id: str, run: Run) -> None:
+        minutes = (dt_util.utcnow() - run.started).total_seconds() / 60
+        if minutes < 1 or run.litres <= 0:
+            return
+        measured = run.litres / minutes
+        old = self.flow_lpm(tap_id)
+        self.tap_state(tap_id)["flow_lpm"] = round(measured if old is None else 0.7 * old + 0.3 * measured, 2)
+
+    async def _seed_flows(self, _hass: HomeAssistant) -> None:
+        """Taps with no known flow yet: the median of their flow sensor's non-zero history."""
+        if "recorder" not in self.hass.config.components:
+            return
+        from homeassistant.components.recorder import get_instance, history
+
+        now = dt_util.utcnow()
+        for tap_id, sub in self.taps.items():
+            sensor = sub.data.get(CONF_FLOW_SENSOR)
+            if not sensor or self.flow_lpm(tap_id) is not None:
+                continue
+            try:
+                states = await get_instance(self.hass).async_add_executor_job(
+                    partial(
+                        history.state_changes_during_period,
+                        self.hass,
+                        now - timedelta(days=30),
+                        now,
+                        entity_id=sensor,
+                        no_attributes=True,
+                        include_start_time_state=False,
+                    )
+                )
+            except Exception as err:  # noqa: BLE001 - recorder may be busy
+                _LOGGER.debug("No flow history for %s: %s", sensor, err)
+                continue
+            current = self.hass.states.get(sensor)
+            unit = (current.attributes.get("unit_of_measurement") if current else None) or "m³/h"
+            values = sorted(
+                float(s.state) * FLOW_TO_LPS.get(unit, FLOW_TO_LPS["m³/h"]) * 60
+                for s in states.get(sensor, [])
+                if _positive(s.state)
+            )
+            if values:
+                self.tap_state(tap_id)["flow_lpm"] = round(values[len(values) // 2], 2)
+        self._save()
+        self.notify()
+
+    def savings_view(self) -> dict[str, Any]:
+        """Water and money saved over the last 12 months of tracking (completed days),
+        against every tap running `baseline_minutes` a day at its typical flow."""
+        price = self.water_price
+        today = dt_util.now().date()
+        try:
+            since = datetime.fromisoformat(self.tracking_since).date()
+        except (TypeError, ValueError):
+            since = today
+        first = max(since, today - timedelta(days=SAVINGS_DAYS))
+        days = [first + timedelta(days=i) for i in range((today - first).days)]  # up to yesterday
+        flows = {tap_id: self.flow_lpm(tap_id) for tap_id in self.taps}
+        counted = {tap_id: f for tap_id, f in flows.items() if f}
+        baseline = len(days) * self.baseline_minutes * sum(counted.values())
+        actual = sum(
+            self.daily.get(day.isoformat(), {}).get(tap_id, 0.0) for day in days for tap_id in counted
+        )
+        saved = baseline - actual
+        per_day = saved / len(days) if days else 0.0
+        names = {tap_id: sub.data.get(CONF_NAME) for tap_id, sub in self.taps.items()}
+        return {
+            "days": len(days),
+            "since": first.isoformat(),
+            "baseline_minutes": self.baseline_minutes,
+            "baseline_litres": round(baseline, 1),
+            "actual_litres": round(actual, 1),
+            "saved_litres": round(saved, 1),
+            "saved_cost": round(saved * price / 1000, 2),
+            "per_year_litres": round(per_day * 365, 1),
+            "per_year_cost": round(per_day * 365 * price / 1000, 2),
+            "flows": {names[t]: f for t, f in flows.items()},
+            "not_counted": [names[t] for t, f in flows.items() if not f],
+        }
 
     def live_litres(self) -> dict[str, float]:
         """Litres so far of runs in progress (flow-measured taps only)."""
@@ -498,6 +603,7 @@ class WaterHub:
             ],
             "since": min(self.daily) if self.daily else None,
             "not_measured": no_flow,
+            "savings": self.savings_view(),
         }
 
     def log_view(self) -> list[dict[str, Any]]:
@@ -1117,6 +1223,7 @@ class WaterHub:
         )
         if run.flow:
             self._add_usage(tap_id, run.litres, run.started)
+            self._learn_flow(tap_id, run)
         self._log({
             "tap": tap_id,
             "name": run.name,

@@ -41,6 +41,9 @@ const attrs = {
   today: m(sum(1)), week: m(sum(7)), days30: m(sum(30)), month: m(sum(14)), projected_month: m(sum(14) / 14 * 30),
   per_tap_30d: [{ name: "Lawn", ...m(6600) }, { name: "Front garden", ...m(2050) }],
   since: series[16].date, not_measured: ["Back Garden"],
+  savings: { days: 14, since: series[16].date, baseline_minutes: 30, baseline_litres: 19614, actual_litres: 8650,
+             saved_litres: 10964, saved_cost: 16.23, per_year_litres: 285850, per_year_cost: 423.06,
+             flows: { Lawn: 11.7, "Front garden": 15, Roses: 8.3, "Back Garden": 11.7 }, not_counted: [] },
 };
 window.calls = [];
 const card = document.getElementById("card");

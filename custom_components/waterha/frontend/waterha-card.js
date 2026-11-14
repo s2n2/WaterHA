@@ -1,4 +1,4 @@
-/* WaterHA cards (main, history, cost): rain either side of now, and every tap with its controls.
+/* WaterHA cards (main, history, cost, run now): rain either side of now, and every tap with its controls.
  *
  *   type: custom:waterha-card
  *   title: Garden            # optional
@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.6.1";
+const VERSION = "0.7.0";
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const WHEN = { always: "Every day", warm_hot: "Warm & hot days", hot: "Hot days only" };
@@ -736,11 +736,20 @@ class WaterHACostCard extends HTMLElement {
           if (this._editPrice) this.shadowRoot.querySelector("input")?.focus();
         }
       });
+      this.shadowRoot.addEventListener("click", (ev) => {
+        if (ev.composedPath().some((n) => n.dataset?.base)) {
+          this._editBase = !this._editBase;
+          this._render(this._costState(), true);
+          if (this._editBase) this.shadowRoot.querySelector("input[data-kind=base]")?.focus();
+        }
+      });
       this.shadowRoot.addEventListener("change", (ev) => {
         const v = parseFloat(ev.target.value);
-        const id = this._priceEntity();
+        const base = ev.target.dataset?.kind === "base";
+        const id = base ? this._entityEnding("_savings_baseline") : this._priceEntity();
         if (!isNaN(v) && v >= 0 && id) this._hass.callService("number", "set_value", { entity_id: id, value: v });
         this._editPrice = false;
+        this._editBase = false;
       });
       this.shadowRoot.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") ev.target.blur?.();
@@ -771,6 +780,29 @@ class WaterHACostCard extends HTMLElement {
     const states = this._hass.states;
     if (this._config.entity) return states[this._config.entity];
     return Object.values(states).find((s) => s.attributes && s.attributes.waterha === "cost");
+  }
+
+  _entityEnding(suffix) {
+    const reg = this._hass.entities || {};
+    return Object.keys(this._hass.states).find((id) => id.startsWith("number.") && id.endsWith(suffix)
+      && (!reg[id] || reg[id].platform === "waterha"));
+  }
+
+  _savings(a) {
+    const sv = a.savings;
+    if (!sv) return "";
+    const base = sv.baseline_minutes ?? 30;
+    const baseText = this._editBase
+      ? `<span class="pedit">vs <input type="number" inputmode="numeric" step="5" min="0" data-kind="base" placeholder="${esc(base)}" aria-label="Minutes per tap per day"/> min/day per tap</span>`
+      : `<button class="price" data-base="1" title="Change what savings are compared with">vs every tap ${base % 2 === 0 ? `${fmt(base / 2)} min twice` : `${fmt(base)} min`} a day</button>`;
+    // Total saved over the rolling 12 months, then a small estimated yearly saving under it.
+    const body = sv.days > 0
+      ? `<b class="${sv.saved_cost < 0 ? "neg" : ""}">${this._money(sv.saved_cost)}</b>
+         <small>Estimated saving ${this._money(sv.per_year_cost)} a year</small>
+         <em>${this._litres(sv.saved_litres)} saved over ${sv.days} day${sv.days === 1 ? "" : "s"}${sv.days < 365 ? " so far" : ""}</em>`
+      : `<b>${this._money(0)}</b><small>Estimated saving: from tomorrow (completed days only)</small>`;
+    const missing = (sv.not_counted || []).length ? `<em>Not counted (flow not known yet): ${esc(sv.not_counted.join(", "))}</em>` : "";
+    return `<div class="save"><span>Saved, rolling 12 months</span>${body}${baseText}${missing}</div>`;
   }
 
   _priceEntity() {
@@ -824,6 +856,7 @@ class WaterHACostCard extends HTMLElement {
     this.shadowRoot.innerHTML = `${CSTYLE}
       <ha-card>
         <div class="head"><div class="title">${esc(title)}</div>${price}</div>
+        ${this._savings(a)}
         <div class="tiles">${tiles}</div>
         ${this._chart(a.series || [], color)}
         ${perTap ? `<div class="sub">Last 30 days by tap · ${this._litres(a.days30?.litres)} · ${this._money(a.days30?.cost)}</div><div class="taps">${perTap}</div>` : `<div class="empty">No measured watering yet. Costs appear after the first run of a tap with a flow sensor.</div>`}
@@ -870,6 +903,14 @@ const CSTYLE = `<style>
   .pedit input { width: 70px; font: inherit; padding: 2px 6px; border-radius: 12px; border: 1px solid var(--divider-color);
     background: var(--card-background-color, transparent); color: var(--primary-text-color); }
   .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 6px; }
+  .save { display: flex; flex-direction: column; gap: 1px; margin: 10px 0 2px; padding: 10px 12px; border-radius: 12px;
+          background: color-mix(in srgb, var(--success-color, #43a047) 12%, transparent); }
+  .save > span { font-size: 0.8em; color: var(--secondary-text-color); }
+  .save b { font-size: 1.8em; font-weight: 500; color: var(--success-color, #43a047); line-height: 1.2; }
+  .save b.neg { color: var(--warning-color, #ffa600); }
+  .save small { font-size: 0.85em; color: var(--primary-text-color); margin-top: -2px; }
+  .save em { font-style: normal; font-size: 0.8em; color: var(--secondary-text-color); }
+  .save .price { align-self: flex-start; margin-top: 2px; }
   @container (max-width: 420px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
   .tile { display: flex; flex-direction: column; }
   .tile span { font-size: 0.8em; color: var(--secondary-text-color); }
@@ -897,5 +938,122 @@ if (!customElements.get("waterha-cost-card")) {
     type: "waterha-cost-card",
     name: "WaterHA cost",
     description: "What watering costs: today, week, month, a 30-day chart and per tap.",
+  });
+}
+
+
+/* WaterHA run-now card: one button per tap.
+ *
+ *   type: custom:waterha-run-card
+ *   title: Run now   # optional
+ */
+class WaterHARunCard extends HTMLElement {
+  setConfig(config) {
+    this._config = config || {};
+    this._sig = null;
+    if (!this.shadowRoot) {
+      this.attachShadow({ mode: "open" });
+      this.shadowRoot.addEventListener("click", (ev) => {
+        const el = ev.composedPath().find((n) => n.dataset?.press);
+        if (el && this._hass) this._hass.callService("button", "press", { entity_id: el.dataset.press });
+      });
+    }
+  }
+
+  static getStubConfig() {
+    return { title: "Run now" };
+  }
+
+  getCardSize() {
+    return 2 + Math.ceil((this._taps?.length || 0) / 2);
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    const rain = Object.values(hass.states).find((s) => s.attributes && s.attributes.waterha === "rain");
+    const taps = rain?.attributes?.taps || [];
+    const sig = taps.map((t) => {
+      const s = hass.states[t.status];
+      return s ? `${s.state}|${s.last_updated}` : "";
+    }).join(",") + (rain ? rain.attributes.day_type : "");
+    if (sig === this._sig) return;
+    this._sig = sig;
+    this._taps = taps;
+    this._render(rain, taps);
+  }
+
+  _render(rain, taps) {
+    const title = this._config.title ?? "Run now";
+    if (!rain) {
+      this.shadowRoot.innerHTML = `${RSTYLE}<ha-card header="${esc(title)}"><div class="empty">WaterHA is not set up yet.</div></ha-card>`;
+      return;
+    }
+    const st = this._hass.states;
+    const stopAll = Object.keys(st).find((id) => id.startsWith("button.") && id.endsWith("_stop_all_taps"));
+    const anyBusy = taps.some((t) => ["watering", "queued"].includes(st[t.status]?.state));
+    const day = BAND[rain.attributes.day_type]?.[0];
+    const buttons = taps.map((t) => {
+      const s = st[t.status];
+      if (!s) return "";
+      const a = s.attributes;
+      const unit = a.mode === "litres" ? "L" : "min";
+      const run = a.run;
+      if (run) {
+        const done = run.mode === "litres" ? run.litres : run.elapsed_minutes;
+        const pct = Math.min(100, (100 * done) / (run.target || 1));
+        return `<button class="tap busy" data-press="${esc(t.stop)}" title="Stop ${esc(t.name)}">
+          <span class="fill" style="width:${pct.toFixed(0)}%"></span>
+          <span class="n">${esc(t.name)}</span><span class="d">${fmt(done)} of ${fmt(run.target)} ${unit} · tap to stop</span>
+          <ha-icon icon="mdi:stop-circle"></ha-icon></button>`;
+      }
+      if (s.state === "queued") {
+        return `<button class="tap queued" data-press="${esc(t.stop)}" title="Cancel ${esc(t.name)}">
+          <span class="n">${esc(t.name)}</span><span class="d">waiting #${a.queue_position || ""} · tap to cancel</span>
+          <ha-icon icon="mdi:timer-sand"></ha-icon></button>`;
+      }
+      return `<button class="tap" data-press="${esc(t.water_now)}" title="Water ${esc(t.name)} now">
+        <span class="n">${esc(t.name)}</span><span class="d">${fmt(a.amount_today)} ${unit}${day ? ` · ${day.toLowerCase()} day` : ""}</span>
+        <ha-icon icon="mdi:water"></ha-icon></button>`;
+    }).join("");
+    this.shadowRoot.innerHTML = `${RSTYLE}
+      <ha-card>
+        <div class="head"><div class="title">${esc(title)}</div>
+          ${anyBusy && stopAll ? `<button class="stopall" data-press="${esc(stopAll)}"><ha-icon icon="mdi:stop"></ha-icon>Stop all</button>` : ""}
+        </div>
+        <div class="grid">${buttons || `<div class="empty">No taps yet.</div>`}</div>
+      </ha-card>`;
+  }
+}
+
+const RSTYLE = `<style>
+  ha-card { padding: 12px 16px 14px; container-type: inline-size; }
+  .head { display: flex; align-items: center; margin-bottom: 8px; }
+  .title { font-size: 1.25em; font-weight: 500; flex: 1; }
+  button { font: inherit; cursor: pointer; }
+  .stopall { display: inline-flex; align-items: center; gap: 4px; padding: 4px 12px; border-radius: 16px; border: 0;
+             background: var(--error-color, #db4437); color: #fff; --mdc-icon-size: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .tap { position: relative; overflow: hidden; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+         align-items: center; text-align: left; padding: 10px 12px; border-radius: 12px; border: 0; min-height: 56px;
+         background: var(--primary-color); color: var(--text-primary-color, #fff); --mdc-icon-size: 26px; }
+  .tap .n { font-weight: 500; font-size: 1.05em; position: relative; }
+  .tap .d { font-size: 0.8em; opacity: 0.9; grid-row: 2; position: relative; }
+  .tap ha-icon { grid-row: 1 / 3; grid-column: 2; position: relative; }
+  .tap.busy { background: color-mix(in srgb, var(--primary-color) 35%, var(--card-background-color, #fff));
+              color: var(--primary-text-color); }
+  .tap.busy .fill { position: absolute; inset: 0 auto 0 0; background: var(--primary-color); opacity: 0.45; }
+  .tap.busy ha-icon { color: var(--error-color, #db4437); }
+  .tap.queued { background: var(--secondary-background-color, #eee); color: var(--primary-text-color); }
+  .tap:active { transform: scale(0.98); }
+  .empty { color: var(--secondary-text-color); padding: 8px 0; }
+</style>`;
+
+if (!customElements.get("waterha-run-card")) {
+  customElements.define("waterha-run-card", WaterHARunCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "waterha-run-card",
+    name: "WaterHA run now",
+    description: "One button per tap to water now (today's amount), with progress and stop.",
   });
 }

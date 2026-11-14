@@ -13,7 +13,8 @@
           "past_rain_sensor": "Backup past rain (rain-rate sensor)",
           "water_price": "Water price",
           "et_cool_below": "Cool day: evapotranspiration below",
-          "et_hot_from": "Hot day: evapotranspiration from"
+          "et_hot_from": "Hot day: evapotranspiration from",
+          "baseline_minutes": "Savings baseline"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
@@ -23,7 +24,8 @@
           "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
           "water_price": "What you pay per 1000 L (per m³), for the cost card.",
           "et_cool_below": "Evapotranspiration (ET₀) is how much water today's heat, sun, wind and dry air pull out, in mm. The day type is the hotter of the temperature and ET₀ rules, so a dry, windy mild day counts as hot. Default 3 mm.",
-          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm."
+          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm.",
+          "baseline_minutes": "Savings are compared against running every tap this many minutes a day at its measured flow. Default 30 (15 minutes twice a day)."
         }
       }
     },
@@ -48,7 +50,8 @@
           "past_rain_sensor": "Backup past rain (rain-rate sensor)",
           "water_price": "Water price",
           "et_cool_below": "Cool day: evapotranspiration below",
-          "et_hot_from": "Hot day: evapotranspiration from"
+          "et_hot_from": "Hot day: evapotranspiration from",
+          "baseline_minutes": "Savings baseline"
         },
         "data_description": {
           "forecast_source": "Past rain always comes from Open-Meteo for your home location. The next 24 h can come from Open-Meteo or a weather entity with an hourly forecast.",
@@ -58,7 +61,8 @@
           "past_rain_sensor": "Used when Open-Meteo is unreachable: its recorded history (mm/h) gives the rain of the past 24 h. Empty = the first current rain-rate sensor found.",
           "water_price": "What you pay per 1000 L (per m³), for the cost card.",
           "et_cool_below": "Evapotranspiration (ET₀) is how much water today's heat, sun, wind and dry air pull out, in mm. The day type is the hotter of the temperature and ET₀ rules, so a dry, windy mild day counts as hot. Default 3 mm.",
-          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm."
+          "et_hot_from": "Default 5 mm. Typical summer days are 4–6 mm.",
+          "baseline_minutes": "Savings are compared against running every tap this many minutes a day at its measured flow. Default 30 (15 minutes twice a day)."
         }
       }
     },
@@ -240,6 +244,9 @@
       },
       "et_today": {
         "name": "Evapotranspiration today"
+      },
+      "water_saved": {
+        "name": "Water saved (12 months)"
       }
     },
     "switch": {
@@ -289,6 +296,9 @@
       },
       "et_hot_from": {
         "name": "Hot day ET from"
+      },
+      "baseline_minutes": {
+        "name": "Savings baseline"
       }
     },
     "time": {

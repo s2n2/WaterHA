@@ -123,6 +123,24 @@ cost chart split by tap, and each tap's share of the last 30 days. Tap the price
 it. WaterHA keeps litres per tap per day for 400 days from the taps' flow sensors; taps
 without a flow sensor are listed as not counted.
 
+**Saved, rolling 12 months**: at the top of the cost card, the money and water saved over the last
+12 months (completed days since WaterHA started tracking) against running every tap a fixed
+time a day (default 30 min, i.e. 15 min twice; tap it to change), with an estimated yearly
+saving underneath. Each tap's baseline uses its typical flow rate, taken from its flow sensor's
+history and refined after every run. Also the `Water saved (12 months)` sensor and the
+`Savings baseline` number.
+
+### Run now card
+
+```yaml
+type: custom:waterha-run-card
+title: Run now   # optional
+```
+
+One big button per tap: tap to water now with today's amount (by day type), shown on the
+button. While a tap waters, its button fills with progress and tapping it stops; queued taps
+show their place. A Stop all button appears while anything is running.
+
 Hub: `Water price` (per 1000 L, default 1.48, also in the hub options), `Water cost today`,
 and `Water used`, a running total in litres you can add to Home Assistant's **Energy**
 dashboard as a water source.

@@ -20,6 +20,7 @@ from .const import (
     BANDS,
     CONF_AMOUNT,
     CONF_BACKUP_WEATHER,
+    CONF_BASELINE_MINUTES,
     CONF_COOL_BELOW,
     CONF_DAYS,
     CONF_ENABLED,
@@ -43,6 +44,7 @@ from .const import (
     CONF_WEATHER_ENTITY,
     DAYS,
     DEFAULT_BAND_AMOUNTS,
+    DEFAULT_BASELINE_MINUTES,
     DEFAULT_COOL_BELOW,
     DEFAULT_ET_COOL_BELOW,
     DEFAULT_ET_HOT_FROM,
@@ -119,6 +121,15 @@ def _hub_schema(defaults: dict[str, Any]) -> vol.Schema:
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),
+            vol.Required(
+                CONF_BASELINE_MINUTES,
+                default=defaults.get(CONF_BASELINE_MINUTES, DEFAULT_BASELINE_MINUTES),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=240, step=5, unit_of_measurement="min/day per tap",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
             vol.Optional(
                 CONF_BACKUP_WEATHER,
                 description={"suggested_value": defaults.get(CONF_BACKUP_WEATHER)},
@@ -156,6 +167,8 @@ def _hub_options(data: dict[str, Any]) -> dict[str, Any]:
             data[key] = float(data[key])
     if CONF_WATER_PRICE in data:
         data[CONF_WATER_PRICE] = float(data[CONF_WATER_PRICE])
+    if CONF_BASELINE_MINUTES in data:
+        data[CONF_BASELINE_MINUTES] = float(data[CONF_BASELINE_MINUTES])
     return data
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -28,7 +28,9 @@ CONF_BACKUP_WEATHER = "backup_weather"
 CONF_PAST_RAIN_SENSOR = "past_rain_sensor"
 CONF_ET_COOL_BELOW = "et_cool_below"  # mm of evapotranspiration today
 CONF_ET_HOT_FROM = "et_hot_from"
-CONF_WATER_PRICE = "water_price"  # per 1000 L (per m³), in HA's currency
+CONF_WATER_PRICE = "water_price"
+# Savings compare against running every tap this many minutes a day (15 min x 2).
+CONF_BASELINE_MINUTES = "baseline_minutes"  # per 1000 L (per m³), in HA's currency
 SOFT_OPTIONS = {
     CONF_COOL_BELOW,
     CONF_HOT_FROM,
@@ -37,6 +39,7 @@ SOFT_OPTIONS = {
     CONF_BACKUP_WEATHER,
     CONF_PAST_RAIN_SENSOR,
     CONF_WATER_PRICE,
+    CONF_BASELINE_MINUTES,
 }
 SOURCE_OPEN_METEO = "open_meteo"
 SOURCE_WEATHER = "weather_entity"
@@ -97,6 +100,8 @@ LOG_MAX = 500
 # Litres per tap per day, kept for the cost card.
 USAGE_DAYS = 400
 DEFAULT_WATER_PRICE = 1.48
+DEFAULT_BASELINE_MINUTES = 30
+SAVINGS_DAYS = 365
 DEFAULT_START_TIME = "06:00:00"
 DEFAULT_START_TIME_2 = "19:00:00"
 # Two daily slots: (number, time key, on/off key, on by default).
