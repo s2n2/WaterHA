@@ -54,15 +54,16 @@ async def test_runs_and_live_run_are_logged(hass: HomeAssistant, setup, rain, fr
 
 async def test_schedule_skip_and_rain_reduction_are_logged(hass: HomeAssistant, setup, rain, freezer):
     freezer.move_to(tomorrow(5, 59, 50))
-    rain(1.0, 1.5, temp=20)  # 2.5 of 5 mm: half
+    rain(2.5, 3.125, temp=20)  # 5.6 mm counted = 2.5 mm effective, of 5 mm: half
     await setup([
         tap_data(amount=2),
-        tap_data(name="Roses", tap_entity=TAP2, amount=2, rain_threshold=2.0),  # 2.5 >= 2: skip
+        tap_data(name="Roses", tap_entity=TAP2, amount=2, rain_threshold=2.0),  # 2.5 effective >= 2: skip
     ])
     await advance(hass, freezer, 10, 10)
     runs = hass.states.get(LOG).attributes["runs"]
     skip = next(r for r in runs if r["name"] == "Roses")
-    assert skip["result"] == "skipped_rain" and skip["rain_mm"] == pytest.approx(2.5, abs=0.2)
+    assert skip["result"] == "skipped_rain" and skip["rain_mm"] == pytest.approx(5.6, abs=0.2)
+    assert skip["rain_effective_mm"] == pytest.approx(2.5, abs=0.2)
     await advance(hass, freezer, 90)
     run = next(r for r in hass.states.get(LOG).attributes["runs"] if r["name"] == "Lawn")
     assert run["result"] == "completed" and run["slot"] == 1 and run["band"] == "warm"

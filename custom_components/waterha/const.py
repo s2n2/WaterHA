@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.const import Platform
 
 DOMAIN = "waterha"
-VERSION = "0.7.2"
+VERSION = "0.8.0"
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -119,6 +119,12 @@ DEFAULT_MAX_MINUTES = 45
 # Rain is refreshed this often; the window is 24 h either side of now.
 RAIN_REFRESH_MINUTES = 30
 RAIN_WINDOW_HOURS = 24
+# Effective rain (irrigation practice): the first ~2 mm wets leaves and the
+# surface and evaporates; of the rest about 80% reaches the roots.
+EFFECTIVE_RAIN_SHARE = 0.8
+RAIN_INTERCEPTION_MM = 2.0
+# Rain fallen since a tap's last check counts back at most this far.
+RAIN_LOOKBACK_HOURS = 72
 # After a failed fetch (e.g. network not up yet at startup), try again this soon.
 RAIN_RETRY_SECONDS = 120
 

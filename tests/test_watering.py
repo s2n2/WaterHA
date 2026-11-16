@@ -108,14 +108,14 @@ async def test_schedule_runs_when_dry(hass: HomeAssistant, setup, rain, freezer)
 
 async def test_schedule_skips_for_rain(hass: HomeAssistant, setup, rain, freezer):
     freezer.move_to(local(5, 59, 50))
-    rain(2.0, 4.0)  # 6 mm >= the 5 mm threshold
+    rain(4.0, 6.0)  # 10 mm counted -> 0.8 x 10 - 2 = 6 mm effective >= the 5 mm threshold
     await setup()
     assert hass.states.get("sensor.lawn_status").state == "rain_hold"
     await advance(hass, freezer, 10)
     assert hass.states.get(TAP).state == "closed"
     last = hass.states.get("sensor.lawn_last_run").attributes
     assert last["result"] == "skipped_rain"
-    assert last["last_skip_rain_mm"] == pytest.approx(6.0, abs=0.15)
+    assert last["last_skip_rain_mm"] == pytest.approx(10.0, abs=0.2)
     # Manual watering still works while holding for rain.
     await press(hass, "button.lawn_water_now")
     assert hass.states.get(TAP).state == "open"

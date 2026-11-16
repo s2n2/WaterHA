@@ -6,7 +6,7 @@
  *
  * No build step: plain custom element, styled with Home Assistant theme vars.
  */
-const VERSION = "0.7.2";
+const VERSION = "0.8.0";
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const DAY_LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
 const WHEN = { always: "Every day", warm_hot: "Warm & hot days", hot: "Hot days only" };
@@ -320,13 +320,20 @@ class WaterHACard extends HTMLElement {
     const thrNum = parseFloat(thr);
     const rainNum = parseFloat(total);
     const factor = a.rain_factor ?? 1;
+    // Rain this tap still has to count (each mm once), and what of it soaks in.
+    const rc = a.rain_counted || {};
+    const eff = rc.effective_mm ?? 0;
+    const counted = rc.counted_mm ?? (isNaN(rainNum) ? 0 : rainNum);
+    const rainText = `${fmt(eff)} mm effective of ${fmt(counted)} mm`;
     const rainNote = !(thrNum > 0)
       ? "ignores rain"
       : factor <= 0
-        ? `skipping: ${isNaN(rainNum) ? "" : rainNum.toFixed(1)} of ${fmt(thrNum)} mm rain`
+        ? `skipping: ${rainText} rain (skips at ${fmt(thrNum)})`
         : factor < 1
-          ? `−${Math.round((1 - factor) * 100)}% for ${rainNum.toFixed(1)} mm rain`
-          : `skips at ${fmt(thrNum)} mm`;
+          ? `−${Math.round((1 - factor) * 100)}% for ${rainText} rain`
+          : counted > 0
+            ? `${fmt(counted)} mm rain, too light to count · skips at ${fmt(thrNum)} mm effective`
+            : `skips at ${fmt(thrNum)} mm effective rain`;
     const todays = (a.slot_plan || []).filter((p) => p.runs_today);
     const plan = factor > 0 && todays.length
       ? ` · ${todays.map((p) => `${fmt(p.amount)} ${unit}`).join(" + ")} (${(BAND[a.day_type]?.[0] || "").toLowerCase()} day)`

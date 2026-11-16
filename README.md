@@ -47,7 +47,7 @@ Works with any `switch` or `valve` tap, such as SONOFF SWV Zigbee valves.
 | Slot runs on | Every day, warm and hot days, or hot days only, e.g. an afternoon top-up only when it is hot or windy. |
 | Slot amount | Share of the day-type amount the slot gives (default 100%; e.g. 30% for a top-up), less for rain. |
 | Days | Which days the slots run |
-| Rain threshold | Skip when past 24 h + next 24 h rain ≥ this (mm); less rain shortens the run in proportion. 0 = ignore rain |
+| Rain threshold | Skip when effective rain (see below) ≥ this (mm); less shortens the run in proportion. 0 = ignore rain |
 | Maximum run time | Safety limit; the tap closes after this whatever happens |
 | One at a time | Wait for other one-at-a-time taps to finish. Taps due together run in the order they were added. |
 
@@ -56,12 +56,22 @@ Change a tap later with its ⋮ → **Reconfigure**, or from its entities on any
 ### How a scheduled run is worked out
 
 ```
-day     = the hotter of: forecast high vs the °C splits, and evapotranspiration vs the mm splits
-slot    = runs only if its 'runs on' matches the day
-amount  = the tap's cool / warm / hot amount for the day × the slot's share
-factor  = 1 − (rain past 24 h + next 24 h) ÷ rain threshold     (0 … 1)
-run     = amount × factor        → skipped when factor is 0
+day       = the hotter of: forecast high vs the °C splits, and evapotranspiration vs the mm splits
+slot      = runs only if its 'runs on' matches the day
+amount    = the tap's cool / warm / hot amount for the day × the slot's share
+
+rain      = rain fallen since this tap's last check (max 72 h)
+            − forecast rain that check already counted        (each mm counts once)
+          + forecast for the next 24 h not already counted
+effective = 0.8 × rain − 2 mm                                   (drizzle mostly evaporates)
+factor    = 1 − effective ÷ rain threshold                      (0 … 1)
+run       = amount × factor        → skipped when factor is 0
 ```
+
+So a forecast that skipped yesterday is not counted again today when it falls, and a
+3 mm drizzle (0.4 mm effective) barely changes anything, while a 10 mm soaking (6 mm
+effective) skips a tap with a 6 mm threshold. The card shows the effective and counted
+rain for each tap.
 
 **Water now** (button, card or service) uses today's day-type amount in full; it ignores rain.
 

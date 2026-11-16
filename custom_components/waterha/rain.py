@@ -195,7 +195,7 @@ async def fetch_open_meteo(
         "latitude": f"{latitude:.4f}",
         "longitude": f"{longitude:.4f}",
         "hourly": "precipitation,precipitation_probability,temperature_2m,et0_fao_evapotranspiration",
-        "past_days": "2",
+        "past_days": "3",
         "forecast_days": "3",
         "timezone": "UTC",
         "timeformat": "unixtime",

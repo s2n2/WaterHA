@@ -75,17 +75,18 @@ async def test_splits_change_without_reload(hass: HomeAssistant, setup, rain):
     assert entry.options["cool_below"] == 21 and entry.options["hot_from"] == 21.5
 
 
-@pytest.mark.parametrize(("past", "nxt", "expected"), [(0, 0, 10), (1.0, 1.5, 5), (2.0, 2.0, 2)])
+@pytest.mark.parametrize(("past", "nxt", "expected"), [(0, 0, 10), (2.5, 3.125, 5), (4.0, 4.0, 1.2), (1.0, 1.5, 10)])
 async def test_light_rain_scales_scheduled_run(hass: HomeAssistant, setup, rain, freezer, past, nxt, expected):
-    """5 mm threshold: 2.5 mm of rain waters 50%, 4 mm waters 20%."""
+    """5 mm threshold, effective rain = 0.8 x rain - 2 mm: 5.6 mm of rain (2.5 effective)
+    waters 50%, 8 mm (4.4 effective) waters 12%, 2.5 mm of drizzle (0 effective) waters in full."""
     start = tomorrow(5, 59, 50)
     freezer.move_to(start)
     rain(past, nxt, temp=20)
     await setup()
     status = hass.states.get("sensor.lawn_status").attributes
-    assert status["scheduled_amount"] == pytest.approx(expected, abs=0.3)
+    assert status["scheduled_amount"] == pytest.approx(expected, abs=0.4)
     await advance(hass, freezer, 10)
-    assert run_target(hass, "lawn") == pytest.approx(expected, abs=0.3)
+    assert run_target(hass, "lawn") == pytest.approx(expected, abs=0.4)
     last = hass.states.get("sensor.lawn_status")
     assert last.state == "watering"
 

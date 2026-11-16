@@ -67,6 +67,7 @@ from .const import (
     DEFAULT_SLOT_TIMES,
     DEFAULT_WATER_PRICE,
     DOMAIN,
+    EFFECTIVE_RAIN_SHARE,
     FLOW_TICK_SECONDS,
     LOG_DAYS,
     LOG_MAX,
@@ -74,6 +75,8 @@ from .const import (
     MODE_MINUTES,
     NO_FLOW_AFTER_SECONDS,
     NO_FLOW_LITRES,
+    RAIN_INTERCEPTION_MM,
+    RAIN_LOOKBACK_HOURS,
     RAIN_REFRESH_MINUTES,
     RAIN_RETRY_SECONDS,
     RAIN_WINDOW_HOURS,
@@ -111,6 +114,7 @@ from .rain import (
     fetch_open_meteo,
     intensity_hours,
     parse_weather_forecast,
+    sum_window,
     summarise,
 )
 
@@ -284,6 +288,8 @@ class WaterHub:
         self._retry_delay = RAIN_RETRY_SECONDS
         self._open_meteo_ok = True
         self._temp_high_backup: float | None = None
+        self._past_hours: list[RainHour] = []
+        self._future_hours: list[RainHour] = []
         self.log: list[dict[str, Any]] = []
         self._pending_factor: dict[str, float] = {}
         # {local date: {tap_id: litres}} and the all-time total, for usage and cost.
@@ -316,6 +322,7 @@ class WaterHub:
         self.log = stored.get("log", [])
         self.daily = stored.get("daily", {})
         self.total_litres = float(stored.get("total_litres", 0.0))
+        self._seed_rain_checks()
         # Savings are counted from the first day WaterHA tracked usage.
         self.tracking_since = stored.get("tracking_since") or dt_util.now().date().isoformat()
         self._day_high = stored.get("day_high") or {}
@@ -774,6 +781,7 @@ class WaterHub:
             self._retry_unsub = None
         self._temp_high_backup = None
         self._hours = past
+        self._past_hours = past
         future: list[RainHour] = past
         source = "Open-Meteo"
         self.rain_error = None
@@ -785,6 +793,7 @@ class WaterHub:
             except (HomeAssistantError, KeyError, TypeError, ValueError) as err:
                 _LOGGER.warning("Forecast from %s unavailable, using Open-Meteo: %s", weather, err)
                 self.rain_error = f"{weather}: {err}; using Open-Meteo forecast"
+        self._future_hours = future
         self.rain = summarise(now, past, future, RAIN_WINDOW_HOURS, source)
         self.rain_updated = now
         self._remember_high()
@@ -870,6 +879,8 @@ class WaterHub:
         if forecast_from:
             parts.append(f"{forecast_from} (forecast)")
         self._hours = future
+        self._past_hours = past
+        self._future_hours = future
         if high is None:
             high = day_max_temp(future, dt_util.now().date(), dt_util.get_default_time_zone())
         self._temp_high_backup = high
@@ -906,7 +917,7 @@ class WaterHub:
             raise HomeAssistantError("recorder is not running")
         from homeassistant.components.recorder import get_instance, history
 
-        start = now - timedelta(hours=RAIN_WINDOW_HOURS + 1)
+        start = now - timedelta(hours=RAIN_LOOKBACK_HOURS + 1)
         states = await get_instance(self.hass).async_add_executor_job(
             partial(
                 history.state_changes_during_period,
@@ -934,17 +945,91 @@ class WaterHub:
     def rain_hold(self, tap_id: str) -> bool:
         return self.rain_factor(tap_id) <= 0
 
-    def rain_factor(self, tap_id: str) -> float:
-        """Share of the amount a scheduled run gives after rain: 1 - rain / threshold.
+    def _rain_between(self, hours: list[RainHour], start: datetime, end: datetime) -> float:
+        return sum_window(hours, start, end) or 0.0
 
-        2.5 mm against a 5 mm threshold waters 50%; at or over it, 0 (skip).
-        No threshold, or no rain data, waters in full.
+    def rain_credit(self, tap_id: str, now: datetime | None = None) -> dict[str, Any]:
+        """The rain a tap's run at `now` should be reduced for, each mm counted once.
+
+        - Fallen: rain since the tap's last check (at most 72 h back; 24 h if it
+          has never been checked), less any forecast rain already credited at that
+          check, so a forecast that skipped yesterday is not counted again today.
+        - Forecast: the next 24 h, less what the last check already credited for
+          the part of its window still to come.
+        - Effective: 80% of (fallen + forecast) beyond the first 2 mm, which only
+          wets leaves and the surface and evaporates.
+        """
+        now = now or dt_util.utcnow()
+        check = self.tap_state(tap_id).get("rain_check") or {}
+        last = dt_util.parse_datetime(check["time"]) if check.get("time") else None
+        until = dt_util.parse_datetime(check["until"]) if check.get("until") else None
+        credited = float(check.get("forecast_mm") or 0.0)
+        if last is None:
+            start, credited, until = now - timedelta(hours=RAIN_WINDOW_HOURS), 0.0, now
+        else:
+            start = max(last, now - timedelta(hours=RAIN_LOOKBACK_HOURS))
+        fallen = self._rain_between(self._past_hours, start, now)
+        new_fallen = max(0.0, fallen - credited)
+        still_credited = max(0.0, credited - fallen) if until is not None and now < until else 0.0
+        forecast = self._rain_between(self._future_hours, now, now + timedelta(hours=RAIN_WINDOW_HOURS))
+        new_forecast = max(0.0, forecast - still_credited)
+        counted = new_fallen + new_forecast
+        effective = max(0.0, EFFECTIVE_RAIN_SHARE * counted - RAIN_INTERCEPTION_MM)
+        return {
+            "fallen_mm": round(new_fallen, 2),
+            "forecast_mm": round(new_forecast, 2),
+            "counted_mm": round(counted, 2),
+            "effective_mm": round(effective, 2),
+            "forecast_window_mm": round(forecast, 2),
+        }
+
+    def rain_factor(self, tap_id: str) -> float:
+        """Share of the amount a scheduled run gives after rain: 1 - effective rain / threshold.
+
+        2.5 mm of effective rain against a 5 mm threshold waters 50%; at or over
+        it, 0 (skip). No threshold, or no rain data, waters in full.
         """
         threshold = float(self.tap(tap_id).get(CONF_RAIN_THRESHOLD) or 0)
-        total = self.rain_total()
-        if threshold <= 0 or total is None:
+        if threshold <= 0 or self.rain is None:
             return 1.0
-        return max(0.0, 1.0 - total / threshold)
+        return max(0.0, 1.0 - self.rain_credit(tap_id)["effective_mm"] / threshold)
+
+    def _seed_rain_checks(self) -> None:
+        """Upgrade from 0.7: rebuild each tap's last rain check from its last scheduled log entry,
+        so rain already credited before the upgrade is not counted a second time."""
+        for tap_id in self.taps:
+            if self.tap_state(tap_id).get("rain_check"):
+                continue
+            last = next(
+                (e for e in reversed(self.log) if e.get("tap") == tap_id and e.get("reason") == "schedule"),
+                None,
+            )
+            if last is None:
+                continue
+            threshold = float(self.tap(tap_id).get(CONF_RAIN_THRESHOLD) or 0)
+            if last.get("result") == RESULT_SKIPPED_RAIN:
+                credited = float(last.get("rain_mm") or 0)
+            elif last.get("rain_factor") is not None and threshold > 0:
+                # 0.7 used factor = 1 - (past + next 24 h) / threshold.
+                credited = max(0.0, (1 - float(last["rain_factor"])) * threshold)
+            else:
+                credited = 0.0
+            start = dt_util.parse_datetime(last["start"])
+            if start is None:
+                continue
+            self.tap_state(tap_id)["rain_check"] = {
+                "time": start.isoformat(),
+                "until": (start + timedelta(hours=RAIN_WINDOW_HOURS)).isoformat(),
+                "forecast_mm": round(credited, 2),
+            }
+
+    def _record_rain_check(self, tap_id: str, now: datetime, credit: dict[str, Any]) -> None:
+        """A scheduled check used the next 24 h forecast: remember it so it is not counted again."""
+        self.tap_state(tap_id)["rain_check"] = {
+            "time": now.isoformat(),
+            "until": (now + timedelta(hours=RAIN_WINDOW_HOURS)).isoformat(),
+            "forecast_mm": credit["forecast_window_mm"],
+        }
 
     def scheduled_amount(self, tap_id: str) -> float:
         """What a scheduled run would give now: today's day-type amount, less for rain."""
@@ -1037,24 +1122,32 @@ class WaterHub:
         )
         if stale:
             await self.async_refresh_rain()
-        total = self.rain_total()
-        state["last_check_rain"] = total
-        if self.rain_hold(tap_id):
+        now = dt_util.utcnow()
+        credit = self.rain_credit(tap_id, now)
+        factor = self.rain_factor(tap_id)
+        if self.rain is not None:
+            self._record_rain_check(tap_id, now, credit)
+        state["last_check_rain"] = credit["counted_mm"]
+        state["last_check_rain_effective"] = credit["effective_mm"]
+        if factor <= 0:
             name = self.tap(tap_id).get(CONF_NAME)
-            _LOGGER.info("Skipping %s: %.1f mm of rain in the 48 h window", name, total)
-            now_iso = dt_util.utcnow().isoformat()
-            state.update(last_skip=now_iso, last_skip_rain=total)
+            _LOGGER.info(
+                "Skipping %s: %.1f mm of rain counted (%.1f mm effective)",
+                name, credit["counted_mm"], credit["effective_mm"],
+            )
+            now_iso = now.isoformat()
+            state.update(last_skip=now_iso, last_skip_rain=credit["counted_mm"])
             state["last_result"] = RESULT_SKIPPED_RAIN
             self._log({
                 "tap": tap_id, "name": name, "start": now_iso, "end": now_iso, "minutes": 0,
                 "litres": None, "result": RESULT_SKIPPED_RAIN, "reason": "schedule",
-                "slot": slot, "rain_mm": total, "rain_factor": 0.0,
+                "slot": slot, "rain_mm": credit["counted_mm"], "rain_effective_mm": credit["effective_mm"],
+                "rain_factor": 0.0,
             })
             self._save()
             self.notify()
             return
         band = self.band_today()
-        factor = self.rain_factor(tap_id)
         _when, share = self.slot_rule(tap_id, slot)
         amount = round(band_amount(self.tap(tap_id), band) * share * factor, 1)
         state.update(
@@ -1350,6 +1443,7 @@ class WaterHub:
             "days": cfg.get(CONF_DAYS, []),
             "rain_threshold_mm": cfg.get(CONF_RAIN_THRESHOLD),
             "rain_window_mm": self.rain_total(),
+            "rain_counted": self.rain_credit(tap_id) if self.rain is not None else None,
             "next_run": nxt.isoformat() if nxt else None,
             "last_run": state.get("last_run"),
             "last_result": state.get("last_result"),
